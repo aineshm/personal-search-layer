@@ -1,0 +1,3 @@
+Unified Personal Search Layer smoke corpus.
+This document exists for quick ingestion tests.
+Key phrase: smoke corpus keyword.

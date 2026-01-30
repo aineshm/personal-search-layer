@@ -1,0 +1,20 @@
+# Ignore data, corpora, local DBs, indexes, model weights, and secrets
+data/
+*.db
+*.faiss
+*.pt
+*.ckpt
+*.h5
+*.pkl
+*.log
+.env
+__pycache__/
+.venv/
+.DS_Store
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Keep smoke corpus, ignore local PDF notes
+reference_docs/*.pdf
+reference_docs/**/*.pdf

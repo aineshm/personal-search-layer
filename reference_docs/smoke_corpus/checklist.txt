@@ -1,0 +1,4 @@
+Smoke corpus checklist:
+- Ingest runs end-to-end.
+- Vector index builds without errors.
+- Query returns at least one hit.
