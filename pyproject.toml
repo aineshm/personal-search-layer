@@ -1,0 +1,13 @@
+[project]
+name = "personal-search-layer"
+description = "Local-first unified personal search layer with hybrid retrieval, agentic routing, and evaluation suite."
+version = "0.1.0"
+authors = ["Your Name <your.email@example.com>"]
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
