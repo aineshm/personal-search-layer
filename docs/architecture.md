@@ -2,10 +2,10 @@
 
 ## Overview
 Personal Search Layer is a local-first retrieval and evidence system. The current implementation supports:
-- Ingestion of text, HTML, and PDF sources.
+- Ingestion of text, HTML, PDF, DOCX, notebook, CSV/TSV, and JSON sources (data formats can be excluded by default).
 - Normalization and chunking.
 - SQLite storage with FTS5 lexical index.
-- FAISS vector index (deterministic baseline embeddings).
+- FAISS vector index (sentence-transformers by default; hash backend available).
 - Hybrid retrieval via Reciprocal Rank Fusion (RRF).
 - Search-only UI and CLI workflows.
 
@@ -20,14 +20,14 @@ Personal Search Layer is a local-first retrieval and evidence system. The curren
 
 ## Component map
 - Ingestion: `src/personal_search_layer/ingestion/`
-  - `loaders.py`: load PDF/HTML/text into `TextBlock`s.
+- `loaders.py`: load PDF/HTML/DOCX/notebook/CSV/JSON/text into `TextBlock`s.
   - `normalization.py`: NFKC + lowercase + whitespace collapse.
   - `chunking.py`: produce `ChunkSpan` with offsets and metadata.
   - `pipeline.py`: end-to-end ingestion, dedupe by content hash.
 - Storage: `src/personal_search_layer/storage/`
   - SQLite schema, FTS5, embedding metadata mapping, run logging.
 - Indexing: `src/personal_search_layer/indexing.py`
-  - Deterministic hash-based embeddings and FAISS index build.
+  - Local embedding model (sentence-transformers) with hash fallback; FAISS index build.
 - Retrieval: `src/personal_search_layer/retrieval.py`
   - Lexical search (FTS5 BM25), vector search (FAISS), RRF fusion.
 - UI: `src/personal_search_layer/ui.py`
@@ -46,7 +46,7 @@ Tables:
 
 ## Retrieval semantics
 - Lexical search: FTS5 BM25; negative scores are inverted to positive.
-- Vector search: FAISS IndexFlatIP over deterministic vectors.
+- Vector search: FAISS IndexFlatIP over normalized embedding vectors.
 - Fusion: RRF with configurable `rrf_k`.
 
 ## Non-negotiables mapped to architecture
@@ -57,7 +57,7 @@ Tables:
 - Evaluation-first: smoke corpus + tests; expand to eval suite (Week 2+).
 
 ## Extension points
-- Replace hash embeddings with real local model embeddings.
+- Swap embedding models or use hash backend for deterministic tests.
 - Add reranker after fusion.
 - Add router and multi-hop retrieval agents.
 - Add verifier/repair for claim-by-claim citation checking.

@@ -5,6 +5,7 @@ This is a map of the current codebase and how pieces connect.
 ## Package layout
 `src/personal_search_layer/`
 - `config.py`: Environment-overridable defaults and paths.
+- `embeddings.py`: Embedding backends (sentence-transformers + hash fallback).
 - `models.py`: Shared dataclasses used across ingestion and retrieval.
 - `ingestion/`: Loaders, normalization, chunking, pipeline.
 - `storage/`: SQLite schema + data access helpers.

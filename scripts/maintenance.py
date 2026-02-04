@@ -4,9 +4,19 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
-from personal_search_layer.config import DB_PATH
-from personal_search_layer.storage import connect, initialize_schema
+try:
+    from personal_search_layer.config import DB_PATH
+    from personal_search_layer.storage import connect, initialize_schema
+except ModuleNotFoundError:
+    repo_root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(repo_root / "src"))
+    from personal_search_layer.config import DB_PATH  # type: ignore[reportMissingImports]
+    from personal_search_layer.storage import (  # type: ignore[reportMissingImports]
+        connect,
+        initialize_schema,
+    )
 
 
 def parse_args() -> argparse.Namespace:

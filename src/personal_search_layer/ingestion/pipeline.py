@@ -8,6 +8,7 @@ from uuid import uuid4
 from personal_search_layer.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
+    BLOCKED_SUFFIXES,
     DB_PATH,
     MAX_DOC_BYTES,
     MAX_PDF_PAGES,
@@ -34,9 +35,11 @@ def ingest_path(
     max_doc_bytes: int = MAX_DOC_BYTES,
     max_pdf_pages: int = MAX_PDF_PAGES,
     normalize: bool = NORMALIZE_TEXT,
+    exclude_suffixes: set[str] | None = None,
 ) -> IngestSummary:
     ensure_data_dirs()
-    files = _collect_files(path)
+    excluded = exclude_suffixes if exclude_suffixes is not None else BLOCKED_SUFFIXES
+    files = _collect_files(path, exclude_suffixes=excluded)
     summary = IngestSummary(
         files_seen=len(files),
         documents_added=0,
@@ -117,11 +120,17 @@ def _normalize_blocks(blocks: list[TextBlock], *, normalize: bool) -> list[TextB
     return normalized
 
 
-def _collect_files(path: Path) -> list[Path]:
+def _collect_files(path: Path, *, exclude_suffixes: set[str] | None = None) -> list[Path]:
+    excluded = exclude_suffixes or set()
     if path.is_file():
-        return [path] if path.suffix.lower() in SUPPORTED_SUFFIXES else []
+        suffix = path.suffix.lower()
+        if suffix in excluded:
+            return []
+        return [path] if suffix in SUPPORTED_SUFFIXES else []
     files: list[Path] = []
     for candidate in path.rglob("*"):
         if candidate.is_file() and candidate.suffix.lower() in SUPPORTED_SUFFIXES:
+            if candidate.suffix.lower() in excluded:
+                continue
             files.append(candidate)
     return files

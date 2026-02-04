@@ -8,8 +8,15 @@ from collections import defaultdict
 import faiss
 import numpy as np
 
-from personal_search_layer.config import DB_PATH, EMBEDDING_DIM, FAISS_INDEX_PATH, RRF_K
-from personal_search_layer.indexing import _hash_to_vector
+from personal_search_layer.config import (
+    DB_PATH,
+    EMBEDDING_BACKEND,
+    EMBEDDING_DIM,
+    FAISS_INDEX_PATH,
+    MODEL_NAME,
+    RRF_K,
+)
+from personal_search_layer.embeddings import embed_query, get_embedding_dim
 from personal_search_layer.models import ScoredChunk, SearchResult
 from personal_search_layer.storage import (
     connect,
@@ -69,12 +76,20 @@ def _filter_faiss_hits(
     return hits
 
 
-def search_vector(query: str, k: int = 8, dim: int = EMBEDDING_DIM) -> SearchResult:
+def search_vector(
+    query: str,
+    k: int = 8,
+    dim: int = EMBEDDING_DIM,
+    *,
+    backend: str = EMBEDDING_BACKEND,
+    model_name: str = MODEL_NAME,
+) -> SearchResult:
     start = time.perf_counter()
     if not FAISS_INDEX_PATH.exists():
         return SearchResult(query=query, mode="vector", chunks=[], latency_ms=0.0)
     index = faiss.read_index(str(FAISS_INDEX_PATH))
-    query_vec = _hash_to_vector(query, dim)
+    resolved_dim = get_embedding_dim(backend=backend, model_name=model_name, dim=dim)
+    query_vec = embed_query(query, backend=backend, model_name=model_name, dim=resolved_dim)
     scores, indices = index.search(np.asarray([query_vec]), k)
     with connect(DB_PATH) as conn:
         initialize_schema(conn)

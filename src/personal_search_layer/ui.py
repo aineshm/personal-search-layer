@@ -4,12 +4,38 @@ from __future__ import annotations
 
 import html
 import re
+import sys
 import time
+from pathlib import Path
 
 import streamlit as st
 
-from personal_search_layer.retrieval import fuse_hybrid, search_lexical, search_vector
-from personal_search_layer.telemetry import configure_logging, log_event
+try:
+    from personal_search_layer.retrieval import fuse_hybrid, search_lexical, search_vector
+    from personal_search_layer.telemetry import configure_logging, log_event
+except ModuleNotFoundError:
+    repo_root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(repo_root / "src"))
+    from personal_search_layer.retrieval import (  # type: ignore[reportMissingImports]
+        fuse_hybrid,
+        search_lexical,
+        search_vector,
+    )
+    from personal_search_layer.telemetry import (  # type: ignore[reportMissingImports]
+        configure_logging,
+        log_event,
+    )
+
+
+def _highlight_terms(text: str, query: str) -> str:
+    terms = [term for term in re.split(r"\s+", query.strip()) if term]
+    if not terms:
+        return html.escape(text)
+    escaped = html.escape(text)
+    for term in sorted(set(terms), key=len, reverse=True):
+        pattern = re.compile(re.escape(html.escape(term)), re.IGNORECASE)
+        escaped = pattern.sub(r"<mark>\g<0></mark>", escaped)
+    return escaped
 
 
 def run() -> None:
@@ -58,14 +84,3 @@ def run() -> None:
 
 if __name__ == "__main__":
     run()
-
-
-def _highlight_terms(text: str, query: str) -> str:
-    terms = [term for term in re.split(r"\\s+", query.strip()) if term]
-    if not terms:
-        return html.escape(text)
-    escaped = html.escape(text)
-    for term in sorted(set(terms), key=len, reverse=True):
-        pattern = re.compile(re.escape(html.escape(term)), re.IGNORECASE)
-        escaped = pattern.sub(r"<mark>\\g<0></mark>", escaped)
-    return escaped

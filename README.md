@@ -13,7 +13,7 @@ Deliver a privacy-preserving, laptop-first search and answer system with traceab
 - Evaluation-first: golden datasets + regression gates are first-class.
 
 ## Architecture (laptop-first)
-- **Ingestion**: PDF/text/HTML loaders, normalization, metadata extraction, chunking, hashing.
+- **Ingestion**: PDF/text/HTML/DOCX/notebook/CSV/JSON loaders, normalization, metadata extraction, chunking, hashing.
 - **Storage**: SQLite for docs/chunks/logs; SQLite FTS5 for lexical index.
 - **Vector index**: FAISS for embeddings; metadata in SQLite.
 - **Retriever**: hybrid fusion (RRF), optional reranker, filters, caching.
@@ -43,14 +43,21 @@ uv venv --python 3.12
 uv sync
 ```
 
+## Embeddings backend
+- Default backend: `sentence-transformers` (downloads model weights on first run).
+- Optional deterministic backend: set `PSL_EMBEDDING_BACKEND=hash` for tests/baselines.
+- Override model: set `PSL_MODEL_NAME` (e.g., `sentence-transformers/all-MiniLM-L6-v2`).
+
 ## Week 1 usage
 All workflows are local-only by default (no cloud calls).
 
 ```bash
 # Ingest a corpus (adjust path + chunking as needed)
+# Data-heavy suffixes are excluded by default; use --include-data to ingest them.
 uv run python scripts/ingest.py --path reference_docs/smoke_corpus --chunk-size 1000 --chunk-overlap 120
 
 # Query with hybrid retrieval (rebuilds FAISS index if missing)
+# Default backend is sentence-transformers; use --backend hash for deterministic baseline.
 uv run python scripts/query.py "smoke corpus keyword" --top-k 8 --rebuild-index
 
 # Run the search-only UI

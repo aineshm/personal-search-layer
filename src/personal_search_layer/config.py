@@ -18,10 +18,23 @@ def _env_int(key: str, default: int) -> int:
 
 
 def _env_bool(key: str, default: bool) -> bool:
-    raw = os.getenv(key)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+	raw = os.getenv(key)
+	if raw is None:
+		return default
+	return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_suffix_set(key: str, default: set[str]) -> set[str]:
+	raw = os.getenv(key)
+	if raw is None:
+		return set(default)
+	parts = [part.strip().lower() for part in raw.split(",") if part.strip()]
+	suffixes: set[str] = set()
+	for part in parts:
+		if not part:
+			continue
+		suffixes.add(part if part.startswith(".") else f".{part}")
+	return suffixes
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -35,13 +48,18 @@ CHUNK_SIZE = _env_int("PSL_CHUNK_SIZE", 1000)
 CHUNK_OVERLAP = _env_int("PSL_CHUNK_OVERLAP", 120)
 DEFAULT_TOP_K = _env_int("PSL_TOP_K", 8)
 
+EMBEDDING_BACKEND = os.getenv("PSL_EMBEDDING_BACKEND", "sentence-transformers")
 EMBEDDING_DIM = _env_int("PSL_EMBED_DIM", 384)
 RRF_K = _env_int("PSL_RRF_K", 60)
-MODEL_NAME = os.getenv("PSL_MODEL_NAME", "hash-embed-v1")
+MODEL_NAME = os.getenv("PSL_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
 
-MAX_DOC_BYTES = _env_int("PSL_MAX_DOC_BYTES", 10_000_000)
-MAX_PDF_PAGES = _env_int("PSL_MAX_PDF_PAGES", 50)
+MAX_DOC_BYTES = _env_int("PSL_MAX_DOC_BYTES", 30_000_000)
+MAX_PDF_PAGES = _env_int("PSL_MAX_PDF_PAGES", 200)
 NORMALIZE_TEXT = _env_bool("PSL_NORMALIZE_TEXT", True)
+BLOCKED_SUFFIXES = _env_suffix_set(
+	"PSL_BLOCKED_SUFFIXES",
+	{".json", ".csv", ".tsv", ".png", ".zip"},
+)
 
 
 def ensure_data_dirs() -> None:

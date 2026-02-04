@@ -3,20 +3,55 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+import sys
 import time
 
-from personal_search_layer.config import (
-    DB_PATH,
-    DEFAULT_TOP_K,
-    EMBEDDING_DIM,
-    FAISS_INDEX_PATH,
-    MODEL_NAME,
-    RRF_K,
-)
-from personal_search_layer.indexing import build_vector_index
-from personal_search_layer.retrieval import fuse_hybrid, search_lexical, search_vector
-from personal_search_layer.storage import connect, initialize_schema, log_run
-from personal_search_layer.telemetry import configure_logging, log_event
+try:
+    from personal_search_layer.config import (
+        DB_PATH,
+        DEFAULT_TOP_K,
+        EMBEDDING_BACKEND,
+        EMBEDDING_DIM,
+        FAISS_INDEX_PATH,
+        MODEL_NAME,
+        RRF_K,
+    )
+    from personal_search_layer.indexing import build_vector_index
+    from personal_search_layer.retrieval import (
+        fuse_hybrid,
+        search_lexical,
+        search_vector,
+    )
+    from personal_search_layer.storage import connect, initialize_schema, log_run
+    from personal_search_layer.telemetry import configure_logging, log_event
+except ModuleNotFoundError:
+    repo_root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(repo_root / "src"))
+    from personal_search_layer.config import (  # type: ignore[reportMissingImports]
+        DB_PATH,
+        DEFAULT_TOP_K,
+        EMBEDDING_BACKEND,
+        EMBEDDING_DIM,
+        FAISS_INDEX_PATH,
+        MODEL_NAME,
+        RRF_K,
+    )
+    from personal_search_layer.indexing import build_vector_index  # type: ignore[reportMissingImports]
+    from personal_search_layer.retrieval import (  # type: ignore[reportMissingImports]
+        fuse_hybrid,
+        search_lexical,
+        search_vector,
+    )
+    from personal_search_layer.storage import (  # type: ignore[reportMissingImports]
+        connect,
+        initialize_schema,
+        log_run,
+    )
+    from personal_search_layer.telemetry import (  # type: ignore[reportMissingImports]
+        configure_logging,
+        log_event,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,6 +75,12 @@ def parse_args() -> argparse.Namespace:
         "--model-name", type=str, default=MODEL_NAME, help="Embedding model name label"
     )
     parser.add_argument(
+        "--backend",
+        type=str,
+        default=EMBEDDING_BACKEND,
+        help="Embedding backend (sentence-transformers or hash)",
+    )
+    parser.add_argument(
         "--dim",
         type=int,
         default=None,
@@ -52,10 +93,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def maybe_build_index(
-    rebuild: bool, *, model_name: str, dim: int | None
+    rebuild: bool,
+    *,
+    model_name: str,
+    dim: int | None,
+    backend: str,
 ) -> dict | None:
     if rebuild or not FAISS_INDEX_PATH.exists():
-        summary = build_vector_index(model_name=model_name, dim=dim or EMBEDDING_DIM)
+        summary = build_vector_index(
+            model_name=model_name, dim=dim or EMBEDDING_DIM, backend=backend
+        )
         if summary.chunks_indexed == 0:
             print("Warning: no chunks found; FAISS index contains 0 vectors.")
         print(
@@ -65,6 +112,7 @@ def maybe_build_index(
                 "vectors_written": summary.vectors_written,
                 "model_name": summary.model_name,
                 "dim": summary.dim,
+                "backend": backend,
                 "elapsed_ms": round(summary.elapsed_ms, 2),
             },
         )
@@ -73,6 +121,7 @@ def maybe_build_index(
             "vectors_written": summary.vectors_written,
             "model_name": summary.model_name,
             "dim": summary.dim,
+            "backend": backend,
             "elapsed_ms": summary.elapsed_ms,
         }
     return None
@@ -86,11 +135,24 @@ def main() -> None:
     index_build = None
     if not args.skip_vector:
         index_build = maybe_build_index(
-            args.rebuild_index, model_name=args.model_name, dim=args.dim
+            args.rebuild_index,
+            model_name=args.model_name,
+            dim=args.dim,
+            backend=args.backend,
         )
 
     lexical = search_lexical(args.query, k=args.top_k)
-    vector = search_vector(args.query, k=args.top_k) if not args.skip_vector else None
+    vector = (
+        search_vector(
+            args.query,
+            k=args.top_k,
+            backend=args.backend,
+            model_name=args.model_name,
+            dim=args.dim or EMBEDDING_DIM,
+        )
+        if not args.skip_vector
+        else None
+    )
     hybrid = (
         fuse_hybrid(lexical, vector, k=args.top_k, rrf_k=args.rrf_k)
         if vector
@@ -100,7 +162,12 @@ def main() -> None:
 
     tool_trace = {
         "lexical": {"k": args.top_k, "latency_ms": lexical.latency_ms},
-        "vector": {"k": args.top_k, "latency_ms": vector.latency_ms}
+        "vector": {
+            "k": args.top_k,
+            "latency_ms": vector.latency_ms,
+            "backend": args.backend,
+            "model_name": args.model_name,
+        }
         if vector
         else None,
         "hybrid": {

@@ -44,6 +44,9 @@ This plan tracks the current build and the next milestones. Each milestone inclu
 - Baseline metrics are logged and stored with a version hash.
 - Hybrid recall improves or matches lexical-only for paraphrase queries.
 
+### Notes
+- When using sentence-transformers, first run will download model weights locally.
+
 ## Week 3: Agentic RAG MVP (multi-hop + verifier/repair)
 
 ### Goals

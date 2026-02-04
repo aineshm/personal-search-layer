@@ -4,18 +4,36 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-
+import sys
 import time
 
-from personal_search_layer.config import (
-    CHUNK_OVERLAP,
-    CHUNK_SIZE,
-    DATA_DIR,
-    MAX_DOC_BYTES,
-    MAX_PDF_PAGES,
-)
-from personal_search_layer.ingestion import ingest_path
-from personal_search_layer.telemetry import configure_logging, log_event
+try:
+    from personal_search_layer.config import (
+        BLOCKED_SUFFIXES,
+        CHUNK_OVERLAP,
+        CHUNK_SIZE,
+        DATA_DIR,
+        MAX_DOC_BYTES,
+        MAX_PDF_PAGES,
+    )
+    from personal_search_layer.ingestion import ingest_path
+    from personal_search_layer.telemetry import configure_logging, log_event
+except ModuleNotFoundError:
+    repo_root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(repo_root / "src"))
+    from personal_search_layer.config import (  # type: ignore[reportMissingImports]
+        BLOCKED_SUFFIXES,
+        CHUNK_OVERLAP,
+        CHUNK_SIZE,
+        DATA_DIR,
+        MAX_DOC_BYTES,
+        MAX_PDF_PAGES,
+    )
+    from personal_search_layer.ingestion import ingest_path  # type: ignore[reportMissingImports]
+    from personal_search_layer.telemetry import (  # type: ignore[reportMissingImports]
+        configure_logging,
+        log_event,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,6 +75,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable text normalization before chunking/indexing",
     )
+    parser.add_argument(
+        "--include-data",
+        action="store_true",
+        help="Include blocked data suffixes (json/csv/tsv/png/zip) during ingestion",
+    )
+    parser.add_argument(
+        "--exclude-suffix",
+        action="append",
+        default=[],
+        help="Additional suffixes to skip (e.g., --exclude-suffix .log)",
+    )
     return parser.parse_args()
 
 
@@ -71,6 +100,7 @@ def main() -> None:
         max_doc_bytes=args.max_doc_bytes,
         max_pdf_pages=args.max_pdf_pages,
         normalize=not args.no_normalize,
+        exclude_suffixes=_resolve_excluded_suffixes(args),
     )
     elapsed_ms = (time.perf_counter() - start) * 1000
     log_event(
@@ -82,10 +112,22 @@ def main() -> None:
         max_doc_bytes=args.max_doc_bytes,
         max_pdf_pages=args.max_pdf_pages,
         normalize=not args.no_normalize,
+        exclude_suffixes=sorted(_resolve_excluded_suffixes(args)),
         elapsed_ms=elapsed_ms,
         **summary.to_dict(),
     )
     print("Ingestion summary:", summary.to_dict())
+
+
+def _resolve_excluded_suffixes(args: argparse.Namespace) -> set[str]:
+    base = set() if args.include_data else set(BLOCKED_SUFFIXES)
+    extra: set[str] = set()
+    for suffix in args.exclude_suffix:
+        if not suffix:
+            continue
+        normalized = suffix.lower()
+        extra.add(normalized if normalized.startswith(".") else f".{normalized}")
+    return base | extra
 
 
 if __name__ == "__main__":
