@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections import defaultdict
 
@@ -19,17 +20,33 @@ from personal_search_layer.config import (
 from personal_search_layer.embeddings import embed_query, get_embedding_dim
 from personal_search_layer.models import ScoredChunk, SearchResult
 from personal_search_layer.storage import (
+    compute_chunk_snapshot_hash,
     connect,
     fetch_chunks_by_ids,
+    get_active_index_manifest,
     get_embedding_mapping,
-    initialize_schema,
+    require_schema,
 )
+
+_TOKEN_RE = re.compile(r"[a-z0-9_]{2,}", re.IGNORECASE)
+
+
+def _to_fts5_query(query: str) -> str:
+    tokens = [token.lower() for token in _TOKEN_RE.findall(query)]
+    if not tokens:
+        return ""
+    unique = list(dict.fromkeys(tokens))[:12]
+    return " OR ".join(f'"{token}"' for token in unique)
 
 
 def search_lexical(query: str, k: int = 8) -> SearchResult:
     start = time.perf_counter()
+    fts_query = _to_fts5_query(query)
+    if not fts_query:
+        return SearchResult(query=query, mode="lexical", chunks=[], latency_ms=0.0)
+
     with connect(DB_PATH) as conn:
-        initialize_schema(conn)
+        require_schema(conn)
         rows = conn.execute(
             """
             SELECT chunk_id, bm25(chunks_fts) AS score
@@ -37,7 +54,7 @@ def search_lexical(query: str, k: int = 8) -> SearchResult:
             WHERE chunks_fts MATCH ?
             ORDER BY score LIMIT ?
             """,
-            (query, k),
+            (fts_query, k),
         ).fetchall()
         chunk_ids = [row["chunk_id"] for row in rows]
         chunk_rows = fetch_chunks_by_ids(conn, chunk_ids)
@@ -87,16 +104,38 @@ def search_vector(
     start = time.perf_counter()
     if not FAISS_INDEX_PATH.exists():
         return SearchResult(query=query, mode="vector", chunks=[], latency_ms=0.0)
+
     index = faiss.read_index(str(FAISS_INDEX_PATH))
     resolved_dim = get_embedding_dim(backend=backend, model_name=model_name, dim=dim)
-    query_vec = embed_query(query, backend=backend, model_name=model_name, dim=resolved_dim)
-    scores, indices = index.search(np.asarray([query_vec]), k)
+
     with connect(DB_PATH) as conn:
-        initialize_schema(conn)
+        require_schema(conn)
+        manifest = get_active_index_manifest(conn)
+        if manifest is None:
+            return SearchResult(query=query, mode="vector", chunks=[], latency_ms=0.0)
+        if manifest["faiss_path"] != str(FAISS_INDEX_PATH):
+            return SearchResult(query=query, mode="vector", chunks=[], latency_ms=0.0)
+        if manifest["model_name"] != model_name or int(manifest["dim"]) != int(
+            resolved_dim
+        ):
+            return SearchResult(query=query, mode="vector", chunks=[], latency_ms=0.0)
+
+        expected_count = int(manifest["chunk_count"])
         mapping = get_embedding_mapping(conn)
+        snapshot = compute_chunk_snapshot_hash(conn)
+        if int(index.ntotal) != expected_count or len(mapping) != expected_count:
+            return SearchResult(query=query, mode="vector", chunks=[], latency_ms=0.0)
+        if snapshot != manifest["chunk_snapshot_hash"]:
+            return SearchResult(query=query, mode="vector", chunks=[], latency_ms=0.0)
+
+        query_vec = embed_query(
+            query, backend=backend, model_name=model_name, dim=resolved_dim
+        )
+        scores, indices = index.search(np.asarray([query_vec]), k)
         hits = _filter_faiss_hits(indices[0], scores[0], mapping)
         chunk_ids = [chunk_id for _, chunk_id in hits]
         chunk_rows = fetch_chunks_by_ids(conn, chunk_ids)
+
     scored: list[ScoredChunk] = []
     for (score, _), chunk in zip(hits, chunk_rows, strict=False):
         scored.append(

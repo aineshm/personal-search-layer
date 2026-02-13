@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
-from uuid import uuid4
 
 from personal_search_layer.config import (
     CHUNK_OVERLAP,
@@ -93,7 +93,12 @@ def ingest_path(
             spans = chunk_text(blocks, chunk_size=chunk_size, overlap=chunk_overlap)
             chunk_records = [
                 ChunkRecord(
-                    chunk_id=str(uuid4()),
+                    chunk_id=_stable_chunk_id(
+                        doc_id=doc_id,
+                        text=span.text,
+                        start_offset=span.start_offset,
+                        end_offset=span.end_offset,
+                    ),
                     doc_id=doc_id,
                     chunk_text=span.text,
                     start_offset=span.start_offset,
@@ -120,7 +125,9 @@ def _normalize_blocks(blocks: list[TextBlock], *, normalize: bool) -> list[TextB
     return normalized
 
 
-def _collect_files(path: Path, *, exclude_suffixes: set[str] | None = None) -> list[Path]:
+def _collect_files(
+    path: Path, *, exclude_suffixes: set[str] | None = None
+) -> list[Path]:
     excluded = exclude_suffixes or set()
     if path.is_file():
         suffix = path.suffix.lower()
@@ -133,4 +140,17 @@ def _collect_files(path: Path, *, exclude_suffixes: set[str] | None = None) -> l
             if candidate.suffix.lower() in excluded:
                 continue
             files.append(candidate)
-    return files
+    return sorted(files, key=lambda item: str(item).lower())
+
+
+def _stable_chunk_id(
+    *,
+    doc_id: str,
+    text: str,
+    start_offset: int,
+    end_offset: int,
+) -> str:
+    digest = hashlib.sha256(
+        f"{doc_id}|{start_offset}|{end_offset}|{text}".encode("utf-8")
+    ).hexdigest()
+    return f"chunk_{digest[:32]}"

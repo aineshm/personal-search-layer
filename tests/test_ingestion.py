@@ -12,8 +12,15 @@ def test_collect_files_filters_suffixes(tmp_path: Path) -> None:
 
 
 def test_collect_files_excludes_blocked_suffixes(tmp_path: Path) -> None:
-    (tmp_path / "data.json").write_text("{\"a\": 1}")
+    (tmp_path / "data.json").write_text('{"a": 1}')
     (tmp_path / "note.txt").write_text("hello")
     files = _collect_files(tmp_path, exclude_suffixes={".json"})
     assert len(files) == 1
     assert files[0].suffix == ".txt"
+
+
+def test_collect_files_returns_sorted_order(tmp_path: Path) -> None:
+    (tmp_path / "b.txt").write_text("b")
+    (tmp_path / "a.txt").write_text("a")
+    files = _collect_files(tmp_path)
+    assert [file.name for file in files] == ["a.txt", "b.txt"]

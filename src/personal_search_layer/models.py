@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -103,3 +103,55 @@ class IndexSummary:
     dim: int
     vectors_written: int
     elapsed_ms: float
+
+
+@dataclass(frozen=True)
+class Citation:
+    claim_id: str
+    chunk_id: str
+    source_path: str
+    page: int | None
+    quote_span_start: int
+    quote_span_end: int
+
+
+@dataclass(frozen=True)
+class Claim:
+    claim_id: str
+    text: str
+    citations: list[Citation]
+
+
+@dataclass
+class DraftAnswer:
+    answer_text: str
+    claims: list[Claim]
+    searched_queries: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class VerificationIssue:
+    type: str
+    claim_id: str | None
+    detail: str
+
+
+@dataclass
+class VerificationResult:
+    passed: bool
+    issues: list[VerificationIssue]
+    conflicts: list[str]
+    abstain: bool
+    abstain_reason: str | None
+    searched_queries: list[str] = field(default_factory=list)
+
+
+@dataclass
+class OrchestrationResult:
+    mode: str
+    intent: str
+    chunks: list[ScoredChunk]
+    draft_answer: DraftAnswer | None
+    verification: VerificationResult | None
+    tool_trace: dict[str, Any]
+    latency_ms: float

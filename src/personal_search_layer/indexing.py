@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from uuid import uuid4
 
 import faiss
 
@@ -19,10 +20,13 @@ from personal_search_layer.embeddings import embed_texts, get_embedding_dim
 from personal_search_layer.models import IndexSummary
 from personal_search_layer.storage import (
     clear_embeddings,
+    compute_chunk_snapshot_hash,
     connect,
+    deactivate_index_manifests,
     get_all_chunks,
+    insert_index_manifest,
     insert_embeddings,
-    initialize_schema,
+    require_schema,
 )
 from personal_search_layer.telemetry import configure_logging, log_event
 
@@ -37,11 +41,14 @@ def build_vector_index(
     logger = configure_logging()
     ensure_data_dirs()
     with connect(DB_PATH) as conn:
-        initialize_schema(conn)
+        require_schema(conn)
         rows = get_all_chunks(conn)
         chunk_ids = [row["chunk_id"] for row in rows]
         texts = [row["chunk_text"] for row in rows]
-        resolved_dim = get_embedding_dim(backend=backend, model_name=model_name, dim=dim)
+        snapshot = compute_chunk_snapshot_hash(conn)
+        resolved_dim = get_embedding_dim(
+            backend=backend, model_name=model_name, dim=dim
+        )
         index = faiss.IndexFlatIP(resolved_dim)
         total_chunks = len(texts)
         vectors_written = 0
@@ -74,7 +81,21 @@ def build_vector_index(
         clear_embeddings(conn)
         insert_embeddings(
             conn,
-            [(idx, chunk_id, model_name, resolved_dim) for idx, chunk_id in enumerate(chunk_ids)],
+            [
+                (idx, chunk_id, model_name, resolved_dim)
+                for idx, chunk_id in enumerate(chunk_ids)
+            ],
+        )
+        deactivate_index_manifests(conn)
+        insert_index_manifest(
+            conn,
+            index_id=f"idx_{uuid4()}",
+            model_name=model_name,
+            dim=resolved_dim,
+            chunk_count=len(chunk_ids),
+            chunk_snapshot_hash=snapshot,
+            faiss_path=str(FAISS_INDEX_PATH),
+            active=1,
         )
         conn.commit()
     elapsed_ms = (time.perf_counter() - start) * 1000

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -11,6 +12,17 @@ from typing import Iterable
 from uuid import uuid4
 
 from personal_search_layer.models import ChunkRecord
+
+SCHEMA_VERSION = 2
+_REQUIRED_TABLES = {
+    "schema_meta",
+    "documents",
+    "chunks",
+    "chunks_fts",
+    "embeddings",
+    "index_manifests",
+    "runs",
+}
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -72,7 +84,35 @@ def _executemany_with_retry(
             raise
 
 
-def initialize_schema(conn: sqlite3.Connection) -> None:
+def _ensure_schema_version(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            schema_version INTEGER NOT NULL
+        )
+        """
+    )
+    row = conn.execute("SELECT schema_version FROM schema_meta WHERE id = 1").fetchone()
+    if row is None:
+        conn.execute(
+            "INSERT INTO schema_meta (id, schema_version) VALUES (1, ?)",
+            (SCHEMA_VERSION,),
+        )
+        return
+    current = int(row["schema_version"])
+    if current > SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Database schema version {current} is newer than supported {SCHEMA_VERSION}."
+        )
+    if current < SCHEMA_VERSION:
+        conn.execute(
+            "UPDATE schema_meta SET schema_version = ? WHERE id = 1",
+            (SCHEMA_VERSION,),
+        )
+
+
+def migrate_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS documents (
@@ -110,6 +150,17 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
             FOREIGN KEY (chunk_id) REFERENCES chunks(chunk_id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS index_manifests (
+            index_id TEXT PRIMARY KEY,
+            model_name TEXT NOT NULL,
+            dim INTEGER NOT NULL,
+            chunk_count INTEGER NOT NULL,
+            chunk_snapshot_hash TEXT NOT NULL,
+            faiss_path TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 0
+        );
+
         CREATE TABLE IF NOT EXISTS runs (
             run_id TEXT PRIMARY KEY,
             query TEXT NOT NULL,
@@ -121,8 +172,41 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
         CREATE INDEX IF NOT EXISTS idx_embeddings_chunk_id ON embeddings(chunk_id);
+        CREATE INDEX IF NOT EXISTS idx_index_manifests_active ON index_manifests(active);
         """
     )
+    _ensure_schema_version(conn)
+
+
+def initialize_schema(conn: sqlite3.Connection) -> None:
+    # Backward-compatible alias while callers migrate to explicit naming.
+    migrate_schema(conn)
+
+
+def require_schema(conn: sqlite3.Connection) -> None:
+    tables = {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+        ).fetchall()
+    }
+    missing = sorted(_REQUIRED_TABLES - tables)
+    if missing:
+        raise RuntimeError(
+            "Database schema is not initialized. "
+            f"Missing tables: {', '.join(missing)}. Run scripts/maintenance.py --migrate."
+        )
+    row = conn.execute("SELECT schema_version FROM schema_meta WHERE id = 1").fetchone()
+    if row is None:
+        raise RuntimeError(
+            "Database schema metadata missing. Run scripts/maintenance.py --migrate."
+        )
+    current = int(row["schema_version"])
+    if current != SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Database schema version {current} is incompatible with required {SCHEMA_VERSION}. "
+            "Run scripts/maintenance.py --migrate."
+        )
 
 
 def insert_document(
@@ -141,7 +225,7 @@ def insert_document(
     if row:
         return row["doc_id"], False
 
-    doc_id = str(uuid4())
+    doc_id = f"doc_{content_hash[:32]}"
     _execute_with_retry(
         conn,
         """
@@ -193,7 +277,18 @@ def insert_chunks(conn: sqlite3.Connection, chunks: Iterable[ChunkRecord]) -> in
 
 
 def get_all_chunks(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return conn.execute("SELECT chunk_id, chunk_text FROM chunks").fetchall()
+    return conn.execute(
+        "SELECT chunk_id, chunk_text FROM chunks ORDER BY chunk_id"
+    ).fetchall()
+
+
+def compute_chunk_snapshot_hash(conn: sqlite3.Connection) -> str:
+    digest = hashlib.sha256()
+    rows = conn.execute("SELECT chunk_id FROM chunks ORDER BY chunk_id").fetchall()
+    for row in rows:
+        digest.update(row["chunk_id"].encode("utf-8"))
+        digest.update(b"|")
+    return digest.hexdigest()
 
 
 def clear_embeddings(conn: sqlite3.Connection) -> None:
@@ -209,6 +304,54 @@ def insert_embeddings(
         "INSERT INTO embeddings (vector_id, chunk_id, model_name, dim) VALUES (?, ?, ?, ?)",
         rows,
     )
+
+
+def deactivate_index_manifests(conn: sqlite3.Connection) -> None:
+    _execute_with_retry(conn, "UPDATE index_manifests SET active = 0 WHERE active = 1")
+
+
+def insert_index_manifest(
+    conn: sqlite3.Connection,
+    *,
+    index_id: str,
+    model_name: str,
+    dim: int,
+    chunk_count: int,
+    chunk_snapshot_hash: str,
+    faiss_path: str,
+    active: int = 1,
+) -> None:
+    _execute_with_retry(
+        conn,
+        """
+        INSERT INTO index_manifests (
+            index_id,
+            model_name,
+            dim,
+            chunk_count,
+            chunk_snapshot_hash,
+            faiss_path,
+            created_at,
+            active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            index_id,
+            model_name,
+            dim,
+            chunk_count,
+            chunk_snapshot_hash,
+            faiss_path,
+            datetime.now(timezone.utc).isoformat(),
+            active,
+        ),
+    )
+
+
+def get_active_index_manifest(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM index_manifests WHERE active = 1 ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
 
 
 def get_embedding_mapping(conn: sqlite3.Connection) -> list[str]:

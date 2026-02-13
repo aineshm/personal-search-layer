@@ -1,90 +1,66 @@
 # Implementation Plan
 
-This plan tracks the current build and the next milestones. Each milestone includes high-level bullets and acceptance criteria.
+This plan tracks what is shipped and the remaining quality-hardening milestones.
 
-## Week 1: Ingestion + indexes + search-only UI + logging
+## Week 1: Ingestion + indexes + UI + logging (completed)
 
-### Goals
-- Local-first ingestion and search pipeline.
-- Deterministic indexing and repeatable retrieval.
-- Search-only UI for evidence exploration.
-
-### Deliverables
+### Delivered
 - Ingestion pipeline (loaders, normalization, chunking).
-- SQLite schema with FTS5 lexical index.
-- FAISS vector index build.
-- Hybrid retrieval (RRF).
-- Search-only UI.
+- SQLite + FTS5 schema and storage helpers.
+- FAISS index build and embedding mapping.
+- Hybrid retrieval (RRF) and initial Streamlit UI.
 - Telemetry for ingest/query/UI.
-- Smoke corpus and basic tests.
 
-### Acceptance criteria
-- `scripts/ingest.py` ingests `reference_docs/smoke_corpus` with non-zero chunks.
-- `scripts/query.py` returns at least one hit for "smoke corpus keyword".
-- `src/personal_search_layer/ui.py` runs and returns results.
-- `pytest -q` passes for existing tests.
-- Logs include latency metrics for ingest and query.
+## Week 2: Hybrid retrieval + router + baseline evals (completed)
 
-## Week 2: Hybrid retrieval + router agent + baseline evals (completed)
+### Delivered
+- Deterministic router with intent-aware pipeline settings.
+- Golden retrieval eval harness and report artifacts.
+- Router accuracy dataset and tests.
+- Retrieval metrics: Recall@K, MRR, nDCG + deltas/history.
 
-### Goals
-- Make retrieval behavior testable and measurable.
-- Add intent routing for better parameterization.
+## Week 3: Agentic RAG trust MVP (implemented)
 
-### Deliverables
-- Query router agent (intent classification, pipeline params).
-- Eval harness for retrieval and routing.
-- Golden retrieval set with expected evidence IDs.
-- Metrics: Recall@K, MRR, nDCG; router accuracy.
-- Eval artifacts with history snapshots and deltas.
-- Human-readable eval summary helper.
+### Delivered
+- Shared orchestration (`search` and `answer` modes).
+- Deterministic extractive claim synthesis with citation spans.
+- Verifier with abstain/conflict logic and repair pass.
+- Bounded multi-hop expansion (max 1 hop).
+- Bounded repair loop (max 1 repair).
+- Answer eval harness + verifier/adversarial dataset.
 
-### Acceptance criteria
-- Router returns stable intent labels for test cases.
-- Retrieval eval suite runs locally in < 2 minutes.
-- Baseline metrics are logged and stored with a version hash and history.
-- Hybrid recall improves or matches lexical-only for paraphrase queries.
-- Intent-aware pipeline settings are enforced (skip-vector for LOOKUP, rerank for SYNTHESIS/TASK).
+### Acceptance checks (implemented)
+- In-corpus answers include claim-level citations.
+- Out-of-corpus behavior can abstain with searched-query rationale.
+- Tool traces include hop/repair counts and verifier outcomes.
+- Tests cover orchestration bounds and answer/verifier flows.
 
-### Notes
-- When using sentence-transformers, first run will download model weights locally.
+## Foundation hardening (implemented)
 
-## Week 3: Agentic RAG MVP (multi-hop + verifier/repair)
+### Delivered
+- Deterministic doc/chunk IDs and deterministic ingest ordering.
+- Active index manifest (`index_manifests`) with snapshot hash.
+- Vector retrieval consistency checks against manifest.
+- Explicit schema migration path (`scripts/maintenance.py --migrate`).
+- Strict schema requirement checks in query/index retrieval paths.
+- Router policy externalized to `router_policy.json` (env override supported).
 
-### Goals
-- Bound multi-hop and verification loops.
-- Enforce evidence-only answers with citations and abstain.
+## Remaining milestones (to project-complete quality)
 
-### Deliverables
-- Multi-hop retrieval (max 1 hop).
-- Verifier/repair pass (max 1 repair pass).
-- Claim-by-claim citation formatting.
-- Conflict detection and abstain rationale.
+### Milestone A: Answer quality tuning
+- Improve citation coverage and abstain correctness on verifier eval.
+- Reduce false-repair rate by tightening claim support criteria.
 
-### Acceptance criteria
-- For in-corpus queries, answers include citations for every claim.
-- For out-of-corpus queries, system abstains and lists queries searched.
-- Multi-hop only triggers once and is logged in tool traces.
-- Verifier detects missing citations and either repairs or abstains.
+### Milestone B: Eval expansion and gating
+- Expand verifier/adversarial cases beyond smoke corpus patterns.
+- Keep soft trend gates and enforce severe-regression hard fails.
 
-## Ongoing: Engineering guardrails
+### Milestone C: Release hardening
+- Lock baseline artifacts for retrieval and answer metrics.
+- Document release runbook for migration, ingest, eval, and gate interpretation.
 
-### Goals
-- Deterministic, testable tools.
-- Keep workflows local-only.
-
-### Acceptance criteria
-- Tool functions callable without LLM.
-- No cloud calls in default workflows.
-- New behavior changes include tests or eval cases.
-
-## Risk register (current)
-- FAISS index and SQLite mapping must stay aligned.
-- PDF parsing can be lossy; extraction failures should be logged.
-- Sentence-transformers embeddings are the default baseline.
-
-## Planned extensions
-- Evaluate alternate local embedding models as needed.
-- Reranker integration for hybrid results.
-- Persistent cache for retrieval results.
-- UI: Answer mode with citation view and conflict display.
+## Guardrails
+- Local-only by default.
+- Deterministic + testable tool behavior.
+- Bounded loops (max 1 hop, max 1 repair).
+- Every behavior change includes tests and/or eval cases.

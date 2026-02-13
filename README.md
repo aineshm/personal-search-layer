@@ -63,18 +63,19 @@ uv run python eval/run_golden_eval.py --top-k 5 --rebuild-index
 uv run python eval/summarize_eval.py --report-path eval/reports/latest.json
 ```
 
-## Week 1 usage
+## Usage
 All workflows are local-only by default (no cloud calls).
 
 ```bash
 # Ingest a corpus (adjust path + chunking as needed)
 # Data-heavy suffixes are excluded by default; use --include-data to ingest them.
+uv run python scripts/maintenance.py --migrate
 uv run python scripts/ingest.py --path reference_docs/smoke_corpus --chunk-size 1000 --chunk-overlap 120
 
 # Query with hybrid retrieval (rebuilds FAISS index if missing)
 uv run python scripts/query.py "smoke corpus keyword" --top-k 8 --rebuild-index
 
-# Run the search-only UI
+# Run the UI (search + answer modes)
 uv run streamlit run src/personal_search_layer/ui.py
 
 # Database maintenance
@@ -94,3 +95,4 @@ rm -f data/search.db data/indexes/chunks.faiss
 - Architecture: `docs/architecture.md`
 - Implementation plan: `docs/implementation-plan.md`
 - Code guide: `docs/code-guide.md`
+- Release runbook: `docs/release-runbook.md`

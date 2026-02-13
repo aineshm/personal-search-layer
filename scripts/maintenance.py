@@ -8,14 +8,15 @@ import sys
 
 try:
     from personal_search_layer.config import DB_PATH
-    from personal_search_layer.storage import connect, initialize_schema
+    from personal_search_layer.storage import connect, migrate_schema, require_schema
 except ModuleNotFoundError:
     repo_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo_root / "src"))
     from personal_search_layer.config import DB_PATH  # type: ignore[reportMissingImports]
     from personal_search_layer.storage import (  # type: ignore[reportMissingImports]
         connect,
-        initialize_schema,
+        migrate_schema,
+        require_schema,
     )
 
 
@@ -32,19 +33,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--backup", type=Path, help="Write a backup copy to the given path"
     )
+    parser.add_argument(
+        "--migrate",
+        action="store_true",
+        help="Apply schema migrations to the current database",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if not (args.vacuum or args.integrity_check or args.backup):
+    if not (args.vacuum or args.integrity_check or args.backup or args.migrate):
         print(
-            "No maintenance actions requested. Use --vacuum, --integrity-check, or --backup."
+            "No maintenance actions requested. Use --migrate, --vacuum, --integrity-check, or --backup."
         )
         return
 
     with connect(DB_PATH) as conn:
-        initialize_schema(conn)
+        if args.migrate:
+            migrate_schema(conn)
+            conn.commit()
+            print("Schema migration completed.")
+        else:
+            require_schema(conn)
         if args.integrity_check:
             result = conn.execute("PRAGMA integrity_check").fetchone()
             print("Integrity check:", result[0] if result else "unknown")

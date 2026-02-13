@@ -1,0 +1,82 @@
+{
+  "flags": {
+    "definition": ["what is", "define", "definition"],
+    "steps": ["how to", "steps", "procedure", "guide", "how do i"],
+    "summary": ["summary", "summarize", "overview"]
+  },
+  "classification": {
+    "lookup_explicit": ["exact", "verbatim", "quote"],
+    "compare": ["compare", "difference", "diff", "vs", "versus"],
+    "timeline": ["timeline", "chronology", "milestones", "dates"],
+    "task": ["checklist", "plan", "todo", "tasks", "steps to"],
+    "synthesis": ["combine", "synthesize", "across sources", "overall", "merge"],
+    "fact_words": ["who", "when", "where", "which", "what", "how many"],
+    "short_lookup_word_count": 4,
+    "question_mark_is_fact": true
+  },
+  "pipeline_settings": {
+    "lookup": {
+      "k": 8,
+      "lexical_weight": 0.8,
+      "allow_multihop": 0,
+      "use_rerank": false,
+      "generate_answer": false,
+      "verifier_mode": "minimal",
+      "max_repair_passes": 0
+    },
+    "fact": {
+      "k": 10,
+      "lexical_weight": 0.5,
+      "allow_multihop": 0,
+      "use_rerank": false,
+      "generate_answer": true,
+      "verifier_mode": "strict",
+      "max_repair_passes": 1
+    },
+    "synthesis": {
+      "k": 24,
+      "lexical_weight": 0.4,
+      "allow_multihop": 1,
+      "use_rerank": true,
+      "generate_answer": true,
+      "verifier_mode": "strict_conflict",
+      "max_repair_passes": 1
+    },
+    "compare": {
+      "k": 20,
+      "lexical_weight": 0.5,
+      "allow_multihop": 1,
+      "use_rerank": true,
+      "generate_answer": true,
+      "verifier_mode": "strict",
+      "max_repair_passes": 1
+    },
+    "timeline": {
+      "k": 20,
+      "lexical_weight": 0.6,
+      "allow_multihop": 1,
+      "use_rerank": true,
+      "generate_answer": true,
+      "verifier_mode": "strict_conflict",
+      "max_repair_passes": 1
+    },
+    "task": {
+      "k": 20,
+      "lexical_weight": 0.4,
+      "allow_multihop": 1,
+      "use_rerank": true,
+      "generate_answer": true,
+      "verifier_mode": "strict",
+      "max_repair_passes": 1
+    },
+    "other": {
+      "k": 12,
+      "lexical_weight": 0.5,
+      "allow_multihop": 0,
+      "use_rerank": false,
+      "generate_answer": true,
+      "verifier_mode": "strict",
+      "max_repair_passes": 1
+    }
+  }
+}

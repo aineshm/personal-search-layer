@@ -2,67 +2,49 @@
 
 _Last updated: 2026-02-13_
 
-## What’s completed (and how)
+## Current state
+- Week 1 and Week 2 foundations are complete and passing.
+- Week 3 trust-oriented MVP is implemented (search + answer modes with bounded orchestration).
+- Foundation hardening refactor is applied (deterministic IDs/order, index manifests, explicit migration path, externalized router policy).
 
-### Environment setup
-- Created a UV-managed Python 3.12 virtual environment at `.venv` and synced dependencies with `uv sync`.
-- Installed dev dependencies (`pytest`, `ruff`) via `uv sync --extra dev`.
+## Implemented capabilities
 
-### Week 1 acceptance checks
-- **Ingestion:** Smoke corpus successfully ingested via `scripts/ingest.py` (non-zero chunks).
-- **Indexing:** FAISS vector index built from sentence-transformers embeddings via `build_vector_index`.
-- **Query:** `scripts/query.py` returns hits for “smoke corpus keyword”.
-- **Tests:** `pytest -q` passes after updates.
+### Core product behavior
+- Search mode: hybrid retrieval (lexical + vector + RRF fusion) with optional rerank.
+- Answer mode: deterministic extractive claims with claim-level citations.
+- Verification: unsupported-claim detection, conflict detection, abstain rationale, and single repair attempt.
+- Bounded loops: max 1 multi-hop expansion and max 1 repair pass.
 
-### Retrieval quality gates (golden retrieval)
-- Added a **golden retrieval case set** in `eval/golden_retrieval.jsonl` with comprehensive queries covering all smoke corpus documents.
-- Added a **golden evaluation runner** `eval/run_golden_eval.py` to compute Recall@K, MRR, and nDCG for lexical, vector, and hybrid modes.
-- Eval runs now emit a **report artifact** at `eval/reports/latest.json` with model metadata and git commit hash.
-- Added a **golden retrieval test** `tests/test_golden_retrieval.py` that:
-  - Ingests the smoke corpus into a temp data dir.
-  - Builds a **sentence-transformers** vector index (no hash fallback).
-  - Validates expected sources appear in **hybrid** top‑K.
-  - Checks phrase presence, score ordering, and chunk boundary metadata (offset sanity).
-  - Asserts hybrid recall ≥ lexical recall.
+### Storage/indexing foundations
+- Explicit migration support via `scripts/maintenance.py --migrate`.
+- Strict schema checks for read/query paths (`require_schema`).
+- Deterministic document and chunk identifiers.
+- Deterministic ingestion file ordering and chunk retrieval ordering.
+- Active index manifest with model/dim/count/snapshot hash metadata.
+- Vector retrieval checks manifest consistency before serving FAISS hits.
 
-### Vector retrieval only (no hash backend usage)
-- Removed hash-backend references from documentation.
-- Updated embedding unit tests to exercise the sentence-transformers path (via a deterministic dummy model for unit tests).
-- Golden retrieval tests and evals now use **real vector embeddings** in the pipeline.
-- Optional **model revision pinning** via `PSL_MODEL_REVISION` for reproducible evals.
+### Routing and policy
+- Router behavior externalized to `src/personal_search_layer/router_policy.json`.
+- Optional policy override via `PSL_ROUTER_POLICY`.
 
-### Week 2 delivery (completed)
-- Implemented **primary-intent router** with pipeline settings (k, lexical weight, rerank, multihop).
-- Enforced intent-aware pipeline defaults in `scripts/query.py`:
-  - LOOKUP skips vector search by default.
-  - Rerank runs only for SYNTHESIS/TASK.
-- Added a **reranker stub** and wired it into the query pipeline.
-- Expanded golden retrieval cases with paraphrases to stress vector retrieval.
-- Expanded eval harness with Recall/MRR/nDCG, per-intent metrics, router accuracy, and report artifacts.
-- Added **history snapshots + metric deltas** in `eval/reports/`.
-- Added a **human-readable eval summary helper** `eval/summarize_eval.py` and tests.
+### Evaluation suite
+- Retrieval eval (`eval/run_golden_eval.py`) with report history and metric deltas.
+- Answer eval (`eval/run_answer_eval.py`) with citation/abstain/conflict/repair metrics.
 
-## Key files added/updated
-- `eval/golden_retrieval.jsonl`: Expanded golden cases for smoke corpus.
-- `eval/run_golden_eval.py`: Local eval runner with report artifacts + history + deltas.
-- `eval/summarize_eval.py`: Human-readable report summary helper.
-- `tests/test_golden_retrieval.py`: Comprehensive regression test for retrieval quality + metadata sanity.
-- `tests/test_embeddings.py`: Unit tests now aligned with sentence-transformers path.
-- `docs/architecture.md`, `docs/code-guide.md`, `docs/implementation-plan.md`, `README.md`: Updated to reflect vector-only embeddings.
-- `pytest.ini`: Added `slow` marker for long-running retrieval tests.
+## Validation status
+- `uv run ruff check .` passes.
+- `uv run pytest -q` passes (`43 passed, 1 deselected`).
+- `uv run pytest -q -m slow` passes (`1 passed`).
 
-## How to validate (quick checklist)
-- Run fast unit tests (excludes slow golden tests): `pytest -q`
-- Run golden retrieval gate: `pytest -q -m slow`
-- Run eval report: `uv run python eval/run_golden_eval.py --top-k 5 --rebuild-index`
-- Summarize eval report: `uv run python eval/summarize_eval.py --report-path eval/reports/latest.json`
-- Run smoke ingest/query:
-  - `uv run python scripts/ingest.py --path reference_docs/smoke_corpus --chunk-size 1000 --chunk-overlap 120`
-  - `uv run python scripts/query.py "smoke corpus keyword" --top-k 5 --rebuild-index`
+## Important commands
+- Migrate schema: `uv run python scripts/maintenance.py --migrate`
+- Ingest corpus: `uv run python scripts/ingest.py --path reference_docs/smoke_corpus`
+- Search query: `uv run python scripts/query.py "smoke corpus keyword" --mode search`
+- Answer query: `uv run python scripts/query.py "smoke corpus keyword" --mode answer`
+- Retrieval eval: `uv run python eval/run_golden_eval.py --top-k 5 --rebuild-index`
+- Answer eval: `uv run python eval/run_answer_eval.py --report-path eval/reports/answer_latest.json`
 
-## Recommended next steps
-
-### Week 3 prep
-- Add a citation formatting helper (chunk -> citation block) to reuse in answer generation.
-- Define a minimal verifier stub that checks “every claim has a citation.”
-- Add a small answer-mode path to Streamlit for verified summaries.
+## Remaining quality work
+- Improve answer-quality metrics (citation coverage, abstain correctness, repair quality) to consistently meet thresholds.
+- Expand verifier/adversarial eval cases for broader corpus patterns.
+- Finalize release hardening docs and baseline-lock process for metric gates.

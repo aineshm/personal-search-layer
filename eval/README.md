@@ -31,3 +31,12 @@ uv run python eval/summarize_eval.py --report-path eval/reports/latest.json
 ## Router intent dataset
 - `router_intents.jsonl` contains labeled queries for intent classification.
 - Eval reports include a router accuracy summary, and tests enforce a minimum accuracy threshold.
+
+## Answer-mode verifier eval
+- `verifier_cases.jsonl` covers supported, out-of-corpus, conflict, and prompt-injection-style cases.
+- `run_answer_eval.py` computes citation coverage, citation precision proxy, abstain correctness,
+  conflict correctness, repair rate, and false-repair rate.
+
+```bash
+uv run python eval/run_answer_eval.py --report-path eval/reports/answer_latest.json
+```
