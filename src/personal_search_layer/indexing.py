@@ -9,6 +9,7 @@ import faiss
 from personal_search_layer.config import (
     DB_PATH,
     EMBEDDING_BACKEND,
+    EMBEDDING_BATCH_SIZE,
     EMBEDDING_DIM,
     FAISS_INDEX_PATH,
     MODEL_NAME,
@@ -23,6 +24,7 @@ from personal_search_layer.storage import (
     insert_embeddings,
     initialize_schema,
 )
+from personal_search_layer.telemetry import configure_logging, log_event
 
 
 def build_vector_index(
@@ -32,6 +34,7 @@ def build_vector_index(
     backend: str = EMBEDDING_BACKEND,
 ) -> IndexSummary:
     start = time.perf_counter()
+    logger = configure_logging()
     ensure_data_dirs()
     with connect(DB_PATH) as conn:
         initialize_schema(conn)
@@ -39,10 +42,33 @@ def build_vector_index(
         chunk_ids = [row["chunk_id"] for row in rows]
         texts = [row["chunk_text"] for row in rows]
         resolved_dim = get_embedding_dim(backend=backend, model_name=model_name, dim=dim)
-        vectors = embed_texts(texts, backend=backend, model_name=model_name, dim=resolved_dim)
         index = faiss.IndexFlatIP(resolved_dim)
-        if len(vectors):
-            index.add(vectors)
+        total_chunks = len(texts)
+        vectors_written = 0
+        if total_chunks:
+            batch_size = max(1, EMBEDDING_BATCH_SIZE)
+            for batch_start in range(0, total_chunks, batch_size):
+                batch_end = min(batch_start + batch_size, total_chunks)
+                batch_texts = texts[batch_start:batch_end]
+                batch_vectors = embed_texts(
+                    batch_texts,
+                    backend=backend,
+                    model_name=model_name,
+                    dim=resolved_dim,
+                )
+                if len(batch_vectors):
+                    index.add(batch_vectors)
+                    vectors_written += len(batch_vectors)
+                log_event(
+                    logger,
+                    "index_batch",
+                    backend=backend,
+                    model_name=model_name,
+                    batch_start=batch_start,
+                    batch_end=batch_end,
+                    total_chunks=total_chunks,
+                    vectors_written=vectors_written,
+                )
         FAISS_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
         faiss.write_index(index, str(FAISS_INDEX_PATH))
         clear_embeddings(conn)
@@ -52,10 +78,20 @@ def build_vector_index(
         )
         conn.commit()
     elapsed_ms = (time.perf_counter() - start) * 1000
+    log_event(
+        logger,
+        "index_complete",
+        backend=backend,
+        model_name=model_name,
+        dim=resolved_dim,
+        chunks_indexed=len(chunk_ids),
+        vectors_written=vectors_written,
+        elapsed_ms=elapsed_ms,
+    )
     return IndexSummary(
         chunks_indexed=len(chunk_ids),
         model_name=model_name,
         dim=resolved_dim,
-        vectors_written=len(vectors),
+        vectors_written=vectors_written,
         elapsed_ms=elapsed_ms,
     )

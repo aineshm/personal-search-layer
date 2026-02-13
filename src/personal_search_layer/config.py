@@ -44,14 +44,16 @@ DB_PATH = DATA_DIR / "search.db"
 INDEX_DIR = DATA_DIR / "indexes"
 FAISS_INDEX_PATH = INDEX_DIR / "chunks.faiss"
 
-CHUNK_SIZE = _env_int("PSL_CHUNK_SIZE", 1000)
-CHUNK_OVERLAP = _env_int("PSL_CHUNK_OVERLAP", 120)
+CHUNK_SIZE = _env_int("PSL_CHUNK_SIZE", 1500)
+CHUNK_OVERLAP = _env_int("PSL_CHUNK_OVERLAP", 150)
 DEFAULT_TOP_K = _env_int("PSL_TOP_K", 8)
 
 EMBEDDING_BACKEND = os.getenv("PSL_EMBEDDING_BACKEND", "sentence-transformers")
 EMBEDDING_DIM = _env_int("PSL_EMBED_DIM", 384)
+EMBEDDING_BATCH_SIZE = _env_int("PSL_EMBED_BATCH_SIZE", 64)
 RRF_K = _env_int("PSL_RRF_K", 60)
 MODEL_NAME = os.getenv("PSL_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
+MODEL_REVISION = os.getenv("PSL_MODEL_REVISION", "").strip() or None
 
 MAX_DOC_BYTES = _env_int("PSL_MAX_DOC_BYTES", 30_000_000)
 MAX_PDF_PAGES = _env_int("PSL_MAX_PDF_PAGES", 200)

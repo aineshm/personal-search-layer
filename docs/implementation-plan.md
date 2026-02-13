@@ -25,7 +25,7 @@ This plan tracks the current build and the next milestones. Each milestone inclu
 - `pytest -q` passes for existing tests.
 - Logs include latency metrics for ingest and query.
 
-## Week 2: Hybrid retrieval + router agent + baseline evals
+## Week 2: Hybrid retrieval + router agent + baseline evals (completed)
 
 ### Goals
 - Make retrieval behavior testable and measurable.
@@ -35,14 +35,16 @@ This plan tracks the current build and the next milestones. Each milestone inclu
 - Query router agent (intent classification, pipeline params).
 - Eval harness for retrieval and routing.
 - Golden retrieval set with expected evidence IDs.
-- Metrics: Recall@10, MRR, nDCG@10; router accuracy.
-- Minimal CLI to run evals and report metrics.
+- Metrics: Recall@K, MRR, nDCG; router accuracy.
+- Eval artifacts with history snapshots and deltas.
+- Human-readable eval summary helper.
 
 ### Acceptance criteria
 - Router returns stable intent labels for test cases.
 - Retrieval eval suite runs locally in < 2 minutes.
-- Baseline metrics are logged and stored with a version hash.
+- Baseline metrics are logged and stored with a version hash and history.
 - Hybrid recall improves or matches lexical-only for paraphrase queries.
+- Intent-aware pipeline settings are enforced (skip-vector for LOOKUP, rerank for SYNTHESIS/TASK).
 
 ### Notes
 - When using sentence-transformers, first run will download model weights locally.
@@ -79,10 +81,10 @@ This plan tracks the current build and the next milestones. Each milestone inclu
 ## Risk register (current)
 - FAISS index and SQLite mapping must stay aligned.
 - PDF parsing can be lossy; extraction failures should be logged.
-- Deterministic hash embeddings are placeholders; quality is limited.
+- Sentence-transformers embeddings are the default baseline.
 
 ## Planned extensions
-- Replace hash embeddings with local model embeddings.
+- Evaluate alternate local embedding models as needed.
 - Reranker integration for hybrid results.
 - Persistent cache for retrieval results.
 - UI: Answer mode with citation view and conflict display.

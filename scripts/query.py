@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 import sys
 import time
@@ -23,6 +24,8 @@ try:
         search_lexical,
         search_vector,
     )
+    from personal_search_layer.rerank import rerank_chunks
+    from personal_search_layer.router import PrimaryIntent, PipelineSettings, route_query
     from personal_search_layer.storage import connect, initialize_schema, log_run
     from personal_search_layer.telemetry import configure_logging, log_event
 except ModuleNotFoundError:
@@ -43,6 +46,12 @@ except ModuleNotFoundError:
         search_lexical,
         search_vector,
     )
+    from personal_search_layer.rerank import rerank_chunks  # type: ignore[reportMissingImports]
+    from personal_search_layer.router import (  # type: ignore[reportMissingImports]
+        PrimaryIntent,
+        PipelineSettings,
+        route_query,
+    )
     from personal_search_layer.storage import (  # type: ignore[reportMissingImports]
         connect,
         initialize_schema,
@@ -60,8 +69,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--top-k",
         type=int,
-        default=DEFAULT_TOP_K,
-        help="Number of results to return (hybrid)",
+        default=None,
+        help="Number of results to return (hybrid). Defaults via router intent.",
     )
     parser.add_argument(
         "--rebuild-index",
@@ -78,7 +87,7 @@ def parse_args() -> argparse.Namespace:
         "--backend",
         type=str,
         default=EMBEDDING_BACKEND,
-        help="Embedding backend (sentence-transformers or hash)",
+        help="Embedding backend (sentence-transformers)",
     )
     parser.add_argument(
         "--dim",
@@ -87,7 +96,7 @@ def parse_args() -> argparse.Namespace:
         help="Embedding dimension override (default from config)",
     )
     parser.add_argument(
-        "--rrf-k", type=int, default=RRF_K, help="Reciprocal rank fusion constant"
+        "--rrf-k", type=int, default=None, help="Reciprocal rank fusion constant"
     )
     return parser.parse_args()
 
@@ -127,13 +136,41 @@ def maybe_build_index(
     return None
 
 
+def enforce_pipeline_bounds(settings: PipelineSettings) -> PipelineSettings:
+    allow_multihop = max(0, min(settings.allow_multihop, 1))
+    max_repair_passes = max(0, min(settings.max_repair_passes, 1))
+    if allow_multihop == 0:
+        max_repair_passes = 0
+    if (
+        allow_multihop == settings.allow_multihop
+        and max_repair_passes == settings.max_repair_passes
+    ):
+        return settings
+    return replace(
+        settings,
+        allow_multihop=allow_multihop,
+        max_repair_passes=max_repair_passes,
+    )
+
+
 def main() -> None:
     args = parse_args()
     logger = configure_logging()
     start = time.perf_counter()
+    decision = route_query(args.query)
+    default_settings = enforce_pipeline_bounds(decision.recommended_pipeline_settings)
+    effective_top_k = args.top_k if args.top_k is not None else default_settings.k
+    effective_rrf_k = args.rrf_k if args.rrf_k is not None else RRF_K
+    # LOOKUP intents default to lexical-only unless the user explicitly overrides.
+    effective_skip_vector = args.skip_vector or decision.primary_intent == PrimaryIntent.LOOKUP
+    effective_use_rerank = (
+        default_settings.use_rerank
+        and decision.primary_intent in {PrimaryIntent.SYNTHESIS, PrimaryIntent.TASK}
+    )
+    # Rerank is intentionally scoped to synthesis/task queries to keep lookup queries fast.
 
     index_build = None
-    if not args.skip_vector:
+    if not effective_skip_vector:
         index_build = maybe_build_index(
             args.rebuild_index,
             model_name=args.model_name,
@@ -141,29 +178,60 @@ def main() -> None:
             backend=args.backend,
         )
 
-    lexical = search_lexical(args.query, k=args.top_k)
+    lexical = search_lexical(args.query, k=effective_top_k)
     vector = (
         search_vector(
             args.query,
-            k=args.top_k,
+            k=effective_top_k,
             backend=args.backend,
             model_name=args.model_name,
             dim=args.dim or EMBEDDING_DIM,
         )
-        if not args.skip_vector
+        if not effective_skip_vector
         else None
     )
     hybrid = (
-        fuse_hybrid(lexical, vector, k=args.top_k, rrf_k=args.rrf_k)
+        fuse_hybrid(
+            lexical,
+            vector,
+            k=effective_top_k,
+            rrf_k=effective_rrf_k,
+            lexical_weight=default_settings.lexical_weight,
+        )
         if vector
         else lexical
     )
+    if effective_use_rerank:
+        hybrid = hybrid.__class__(
+            query=hybrid.query,
+            mode=hybrid.mode,
+            chunks=rerank_chunks(args.query, hybrid.chunks),
+            latency_ms=hybrid.latency_ms,
+        )
     total_latency_ms = (time.perf_counter() - start) * 1000
 
     tool_trace = {
-        "lexical": {"k": args.top_k, "latency_ms": lexical.latency_ms},
+        "router": {
+            "primary_intent": decision.primary_intent.value,
+            "flags": {
+                "wants_definition": decision.flags.wants_definition,
+                "wants_steps": decision.flags.wants_steps,
+                "wants_summary": decision.flags.wants_summary,
+            },
+            "settings": {
+                "k": default_settings.k,
+                "lexical_weight": default_settings.lexical_weight,
+                "allow_multihop": default_settings.allow_multihop,
+                "use_rerank": default_settings.use_rerank,
+                "generate_answer": default_settings.generate_answer,
+                "verifier_mode": default_settings.verifier_mode.value,
+                "max_repair_passes": default_settings.max_repair_passes,
+            },
+            "signals": decision.signals,
+        },
+        "lexical": {"k": effective_top_k, "latency_ms": lexical.latency_ms},
         "vector": {
-            "k": args.top_k,
+            "k": effective_top_k,
             "latency_ms": vector.latency_ms,
             "backend": args.backend,
             "model_name": args.model_name,
@@ -171,10 +239,11 @@ def main() -> None:
         if vector
         else None,
         "hybrid": {
-            "k": args.top_k,
-            "rrf_k": args.rrf_k,
+            "k": effective_top_k,
+            "rrf_k": effective_rrf_k,
             "latency_ms": hybrid.latency_ms,
         },
+    "rerank": {"enabled": effective_use_rerank},
         "index_build": index_build,
     }
 
@@ -182,8 +251,9 @@ def main() -> None:
         logger,
         "query",
         query=args.query,
-        top_k=args.top_k,
-        skip_vector=args.skip_vector,
+        intent=decision.primary_intent.value,
+        top_k=effective_top_k,
+        skip_vector=effective_skip_vector,
         rebuild_index=args.rebuild_index,
         lexical_latency_ms=lexical.latency_ms,
         vector_latency_ms=vector.latency_ms if vector else None,
@@ -196,7 +266,7 @@ def main() -> None:
         log_run(
             conn,
             query=args.query,
-            intent=None,
+            intent=decision.primary_intent.value,
             tool_trace=tool_trace,
             latency_ms=total_latency_ms,
         )

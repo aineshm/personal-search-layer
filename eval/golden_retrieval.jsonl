@@ -1,0 +1,16 @@
+{"query": "smoke corpus keyword", "expected_sources": ["reference_docs/smoke_corpus/overview.txt"], "must_contain": ["smoke corpus keyword"]}
+{"query": "where is the smoke corpus keyword mentioned", "expected_sources": ["reference_docs/smoke_corpus/overview.txt"], "must_contain": ["smoke corpus keyword"]}
+{"query": "unified personal search layer", "expected_sources": ["reference_docs/smoke_corpus/overview.txt"], "must_contain": ["Unified Personal Search Layer"]}
+{"query": "what is the unified personal search layer", "expected_sources": ["reference_docs/smoke_corpus/overview.txt"], "must_contain": ["Unified Personal Search Layer"]}
+{"query": "ingest runs end to end", "expected_sources": ["reference_docs/smoke_corpus/checklist.txt"], "must_contain": ["Ingest runs end-to-end"]}
+{"query": "does ingestion run end to end", "expected_sources": ["reference_docs/smoke_corpus/checklist.txt"], "must_contain": ["Ingest runs end-to-end"]}
+{"query": "vector index builds without errors", "expected_sources": ["reference_docs/smoke_corpus/checklist.txt"], "must_contain": ["Vector index builds without errors"]}
+{"query": "does the vector index build cleanly", "expected_sources": ["reference_docs/smoke_corpus/checklist.txt"], "must_contain": ["Vector index builds without errors"]}
+{"query": "query returns at least one hit", "expected_sources": ["reference_docs/smoke_corpus/checklist.txt"], "must_contain": ["Query returns at least one hit"]}
+{"query": "is there at least one query hit", "expected_sources": ["reference_docs/smoke_corpus/checklist.txt"], "must_contain": ["Query returns at least one hit"]}
+{"query": "hybrid retrieval combines lexical", "expected_sources": ["reference_docs/smoke_corpus/notes.md"], "must_contain": ["Hybrid retrieval combines lexical"]}
+{"query": "how are lexical and vector signals combined", "expected_sources": ["reference_docs/smoke_corpus/notes.md"], "must_contain": ["Hybrid retrieval combines lexical"]}
+{"query": "reciprocal rank fusion", "expected_sources": ["reference_docs/smoke_corpus/notes.md"], "must_contain": ["Reciprocal Rank Fusion"]}
+{"query": "what method merges candidate lists", "expected_sources": ["reference_docs/smoke_corpus/notes.md"], "must_contain": ["Reciprocal Rank Fusion"]}
+{"query": "evidence must be traceable", "expected_sources": ["reference_docs/smoke_corpus/notes.md"], "must_contain": ["Evidence must be traceable"]}
+{"query": "why must evidence be traceable", "expected_sources": ["reference_docs/smoke_corpus/notes.md"], "must_contain": ["Evidence must be traceable"]}

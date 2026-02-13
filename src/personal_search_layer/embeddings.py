@@ -8,7 +8,12 @@ from typing import Iterable
 
 import numpy as np
 
-from personal_search_layer.config import EMBEDDING_BACKEND, EMBEDDING_DIM, MODEL_NAME
+from personal_search_layer.config import (
+    EMBEDDING_BACKEND,
+    EMBEDDING_DIM,
+    MODEL_NAME,
+    MODEL_REVISION,
+)
 
 
 def embed_texts(
@@ -22,9 +27,11 @@ def embed_texts(
     if not text_list:
         return np.zeros((0, dim or EMBEDDING_DIM), dtype="float32")
     if backend == "hash":
-        return _hash_embed_texts(text_list, dim or EMBEDDING_DIM)
+        raise ValueError(
+            "Hash embeddings are disabled; use backend='sentence-transformers'."
+        )
     if backend == "sentence-transformers":
-        model = _load_sentence_transformer(model_name)
+        model = _load_sentence_transformer(model_name, MODEL_REVISION)
         vectors = model.encode(text_list, normalize_embeddings=True)
         return np.asarray(vectors, dtype="float32")
     raise ValueError(f"Unsupported embedding backend: {backend}")
@@ -48,9 +55,11 @@ def get_embedding_dim(
     dim: int | None = None,
 ) -> int:
     if backend == "hash":
-        return dim or EMBEDDING_DIM
+        raise ValueError(
+            "Hash embeddings are disabled; use backend='sentence-transformers'."
+        )
     if backend == "sentence-transformers":
-        model = _load_sentence_transformer(model_name)
+        model = _load_sentence_transformer(model_name, MODEL_REVISION)
         return int(model.get_sentence_embedding_dimension())
     raise ValueError(f"Unsupported embedding backend: {backend}")
 
@@ -72,11 +81,13 @@ def _hash_embed_texts(texts: Iterable[str], dim: int) -> np.ndarray:
 
 
 @lru_cache(maxsize=2)
-def _load_sentence_transformer(model_name: str):
+def _load_sentence_transformer(model_name: str, revision: str | None):
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError as exc:
         raise RuntimeError(
             "sentence-transformers is not installed; run 'uv sync --extra dev'"
         ) from exc
+    if revision:
+        return SentenceTransformer(model_name, revision=revision)
     return SentenceTransformer(model_name)

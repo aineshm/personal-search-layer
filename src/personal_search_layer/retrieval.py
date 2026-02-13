@@ -120,15 +120,18 @@ def fuse_hybrid(
     vector: SearchResult,
     k: int = 8,
     rrf_k: int = RRF_K,
+    lexical_weight: float = 0.5,
 ) -> SearchResult:
     start = time.perf_counter()
+    clipped_weight = min(max(lexical_weight, 0.0), 1.0)
+    vector_weight = 1.0 - clipped_weight
     scores: dict[str, float] = defaultdict(float)
     lookup: dict[str, ScoredChunk] = {}
     for rank, chunk in enumerate(lexical.chunks, start=1):
-        scores[chunk.chunk_id] += 1.0 / (rrf_k + rank)
+        scores[chunk.chunk_id] += clipped_weight / (rrf_k + rank)
         lookup[chunk.chunk_id] = chunk
     for rank, chunk in enumerate(vector.chunks, start=1):
-        scores[chunk.chunk_id] += 1.0 / (rrf_k + rank)
+        scores[chunk.chunk_id] += vector_weight / (rrf_k + rank)
         lookup.setdefault(chunk.chunk_id, chunk)
     ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:k]
     fused = [

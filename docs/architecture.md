@@ -5,7 +5,7 @@ Personal Search Layer is a local-first retrieval and evidence system. The curren
 - Ingestion of text, HTML, PDF, DOCX, notebook, CSV/TSV, and JSON sources (data formats can be excluded by default).
 - Normalization and chunking.
 - SQLite storage with FTS5 lexical index.
-- FAISS vector index (sentence-transformers by default; hash backend available).
+- FAISS vector index (sentence-transformers by default).
 - Hybrid retrieval via Reciprocal Rank Fusion (RRF).
 - Search-only UI and CLI workflows.
 
@@ -15,8 +15,9 @@ Personal Search Layer is a local-first retrieval and evidence system. The curren
 3. Chunk blocks into spans with metadata (page/section).
 4. Store documents and chunks in SQLite + FTS5.
 5. Build a FAISS index over chunks.
-6. Query: lexical + vector search -> hybrid fusion.
-7. UI/CLI returns evidence with metadata and logs run traces.
+6. Route query to an intent + pipeline settings.
+7. Query: lexical + vector search -> hybrid fusion -> optional rerank.
+8. UI/CLI returns evidence with metadata and logs run traces.
 
 ## Component map
 - Ingestion: `src/personal_search_layer/ingestion/`
@@ -27,9 +28,13 @@ Personal Search Layer is a local-first retrieval and evidence system. The curren
 - Storage: `src/personal_search_layer/storage/`
   - SQLite schema, FTS5, embedding metadata mapping, run logging.
 - Indexing: `src/personal_search_layer/indexing.py`
-  - Local embedding model (sentence-transformers) with hash fallback; FAISS index build.
+  - Local embedding model (sentence-transformers); FAISS index build.
 - Retrieval: `src/personal_search_layer/retrieval.py`
   - Lexical search (FTS5 BM25), vector search (FAISS), RRF fusion.
+- Routing: `src/personal_search_layer/router.py`
+  - Deterministic primary intent classification + pipeline settings.
+- Rerank: `src/personal_search_layer/rerank.py`
+  - Lightweight reranker stub (intent-gated in the query pipeline).
 - UI: `src/personal_search_layer/ui.py`
   - Streamlit search-only experience with evidence view.
 - Telemetry: `src/personal_search_layer/telemetry.py`
@@ -47,7 +52,8 @@ Tables:
 ## Retrieval semantics
 - Lexical search: FTS5 BM25; negative scores are inverted to positive.
 - Vector search: FAISS IndexFlatIP over normalized embedding vectors.
-- Fusion: RRF with configurable `rrf_k`.
+- Fusion: RRF with configurable `rrf_k` and intent-aware lexical weighting.
+- Rerank: optional lexical-overlap reranker, enabled only for SYNTHESIS/TASK.
 
 ## Non-negotiables mapped to architecture
 - Local-first: SQLite + FAISS, no hosted dependencies in default workflows.
@@ -56,8 +62,12 @@ Tables:
 - Evidence-only: retrieval returns chunks with metadata for citations.
 - Evaluation-first: smoke corpus + tests; expand to eval suite (Week 2+).
 
+## Evaluation artifacts
+- `eval/run_golden_eval.py` produces `eval/reports/latest.json` plus timestamped history.
+- Reports include metric deltas versus the previous run and router accuracy.
+
 ## Extension points
-- Swap embedding models or use hash backend for deterministic tests.
+- Swap embedding models as needed for local workflows.
 - Add reranker after fusion.
 - Add router and multi-hop retrieval agents.
 - Add verifier/repair for claim-by-claim citation checking.

@@ -1,0 +1,27 @@
+{"query": "What is a large language model?", "intent": "fact"}
+{"query": "Define vector embeddings", "intent": "fact"}
+{"query": "How to rebuild the FAISS index", "intent": "task"}
+{"query": "How do I ingest a folder of PDFs", "intent": "task"}
+{"query": "Give me a summary of ingestion pipeline", "intent": "synthesis"}
+{"query": "Summarize retrieval performance", "intent": "synthesis"}
+{"query": "When was the index last built?", "intent": "fact"}
+{"query": "Where is the SQLite database stored?", "intent": "fact"}
+{"query": "Chunk overlap configuration", "intent": "lookup"}
+{"query": "Vector search", "intent": "lookup"}
+{"query": "Which model is used for embeddings?", "intent": "fact"}
+{"query": "Overview of the search layer", "intent": "synthesis"}
+{"query": "Guide to query routing", "intent": "task"}
+{"query": "What is reciprocal rank fusion?", "intent": "fact"}
+{"query": "Notes about lexical search", "intent": "lookup"}
+{"query": "Compare retrieval settings between runs", "intent": "compare"}
+{"query": "Timeline of project milestones", "intent": "timeline"}
+{"query": "Exact phrase \"smoke corpus keyword\"", "intent": "lookup"}
+{"query": "Show me the diff between version 1 and version 2", "intent": "compare"}
+{"query": "Chronology of release dates", "intent": "timeline"}
+{"query": "Create a checklist for onboarding", "intent": "task"}
+{"query": "Steps to rebuild the index", "intent": "task"}
+{"query": "Summarize the system architecture", "intent": "synthesis"}
+{"query": "Merge insights across docs", "intent": "synthesis"}
+{"query": "Who owns the data directory?", "intent": "fact"}
+{"query": "Where are indexes stored?", "intent": "fact"}
+{"query": "Vector index", "intent": "lookup"}
