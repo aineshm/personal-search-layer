@@ -4,17 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
+import subprocess
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from personal_search_layer.answering import synthesize_extractive
-from personal_search_layer.models import DraftAnswer, ScoredChunk, VerificationResult
-from personal_search_layer.orchestration import run_query
-from personal_search_layer.router import route_query
-from personal_search_layer.verification import verify_answer
-
-SCHEMA_VERSION = "2.0"
+SCHEMA_VERSION = "3.0"
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,6 +41,37 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional explicit baseline report for delta and regression checks",
     )
+    parser.add_argument(
+        "--hybrid-recall-delta",
+        type=float,
+        default=None,
+        help=(
+            "Optional retrieval hybrid recall delta versus locked baseline "
+            "(negative means regression)."
+        ),
+    )
+    parser.add_argument(
+        "--fail-on-hard-gates",
+        action="store_true",
+        help="Exit non-zero when hard gates fail (for CI).",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("eval/.tmp_answer_eval_data"),
+        help="Isolated data directory for deterministic eval corpus prep.",
+    )
+    parser.add_argument(
+        "--ingest-path",
+        type=Path,
+        default=Path("reference_docs/smoke_corpus"),
+        help="Corpus path to ingest into isolated eval data directory.",
+    )
+    parser.add_argument(
+        "--skip-prepare-data",
+        action="store_true",
+        help="Skip reset/migrate/ingest prep for the isolated eval data directory.",
+    )
     return parser.parse_args()
 
 
@@ -54,7 +83,33 @@ def _load_cases(path: Path) -> list[dict]:
     return cases
 
 
-def _citation_coverage(draft: DraftAnswer | None) -> float:
+def _prepare_eval_data(data_dir: Path, ingest_path: Path) -> None:
+    if data_dir.exists():
+        shutil.rmtree(data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["PSL_DATA_DIR"] = str(data_dir)
+    env["PYTHONPATH"] = str(Path("src").resolve())
+    commands = [
+        [sys.executable, "scripts/maintenance.py", "--migrate"],
+        [sys.executable, "scripts/ingest.py", "--path", str(ingest_path)],
+    ]
+    for cmd in commands:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=Path.cwd(),
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed command {' '.join(cmd)}:\n{result.stderr or result.stdout}"
+            )
+
+
+def _citation_coverage(draft: object | None) -> float:
     if not draft or not draft.claims:
         return 0.0
     covered = sum(1 for claim in draft.claims if claim.citations)
@@ -62,8 +117,8 @@ def _citation_coverage(draft: DraftAnswer | None) -> float:
 
 
 def _citation_precision_proxy(
-    draft: DraftAnswer | None,
-    verification: VerificationResult | None,
+    draft: object | None,
+    verification: object | None,
 ) -> float:
     if not draft or not draft.claims or not verification:
         return 0.0
@@ -76,7 +131,14 @@ def _citation_precision_proxy(
     return supported / len(draft.claims)
 
 
-def _run_synthetic_case(case: dict) -> tuple[DraftAnswer, VerificationResult, dict]:
+def _run_synthetic_case(
+    case: dict, symbols: dict[str, object]
+) -> tuple[object, object, dict]:
+    ScoredChunk = symbols["ScoredChunk"]
+    route_query = symbols["route_query"]
+    synthesize_extractive = symbols["synthesize_extractive"]
+    verify_answer = symbols["verify_answer"]
+
     query = case["query"]
     chunks = [ScoredChunk(**item) for item in case.get("synthetic_chunks", [])]
     route = route_query(query)
@@ -142,6 +204,22 @@ def _avg_rollups(
 
 def main() -> None:
     args = parse_args()
+    if not args.skip_prepare_data:
+        _prepare_eval_data(args.data_dir, args.ingest_path)
+    os.environ["PSL_DATA_DIR"] = str(args.data_dir)
+
+    from personal_search_layer.answering import synthesize_extractive
+    from personal_search_layer.models import ScoredChunk
+    from personal_search_layer.orchestration import run_query
+    from personal_search_layer.router import route_query
+    from personal_search_layer.verification import verify_answer
+
+    symbols = {
+        "ScoredChunk": ScoredChunk,
+        "route_query": route_query,
+        "synthesize_extractive": synthesize_extractive,
+        "verify_answer": verify_answer,
+    }
     cases = _load_cases(args.cases)
 
     total = max(len(cases), 1)
@@ -156,6 +234,7 @@ def main() -> None:
         "over_abstain_rate": 0.0,
         "under_abstain_rate": 0.0,
         "unsupported_claim_rate": 0.0,
+        "verdict_correctness": 0.0,
     }
 
     by_intent_raw: dict[str, dict[str, float]] = defaultdict(
@@ -181,7 +260,7 @@ def main() -> None:
     false_repairs = 0
     for case in cases:
         if case.get("synthetic_chunks"):
-            draft, verification, tool_trace = _run_synthetic_case(case)
+            draft, verification, tool_trace = _run_synthetic_case(case, symbols)
             intent = (
                 case.get("intent") or route_query(case["query"]).primary_intent.value
             )
@@ -228,6 +307,8 @@ def main() -> None:
         )
         if unsupported_present:
             metrics["unsupported_claim_rate"] += 1.0
+        if expected_verdict:
+            metrics["verdict_correctness"] += float(actual_verdict == expected_verdict)
 
         by_intent_counts[intent] += 1
         by_intent_raw[intent]["abstain_correctness"] += float(
@@ -284,6 +365,7 @@ def main() -> None:
             "abstain_correctness_min": 0.95,
             "conflict_correctness_min": 0.85,
             "false_repair_rate_max": 0.20,
+            "hybrid_recall_delta_min": -0.05,
         },
         "long_term": {
             "citation_coverage_min": 0.98,
@@ -303,25 +385,36 @@ def main() -> None:
         ),
         "cases_detail": details,
     }
-    report["gates"] = {
-        "citation_coverage_pass": metrics["citation_coverage"]
-        >= thresholds["phase"]["citation_coverage_min"],
+    hybrid_delta = args.hybrid_recall_delta
+    hybrid_recall_pass = (
+        True
+        if hybrid_delta is None
+        else hybrid_delta >= thresholds["phase"]["hybrid_recall_delta_min"]
+    )
+    hard_gates = {
         "abstain_correctness_pass": metrics["abstain_correctness"]
         >= thresholds["phase"]["abstain_correctness_min"],
         "conflict_correctness_pass": metrics["conflict_correctness"]
         >= thresholds["phase"]["conflict_correctness_min"],
+        "hybrid_recall_regression_pass": hybrid_recall_pass,
+    }
+    soft_gates = {
+        "citation_coverage_pass": metrics["citation_coverage"]
+        >= thresholds["phase"]["citation_coverage_min"],
         "false_repair_rate_pass": metrics["false_repair_rate"]
         <= thresholds["phase"]["false_repair_rate_max"],
-        "overall_pass": (
-            metrics["citation_coverage"] >= thresholds["phase"]["citation_coverage_min"]
-            and metrics["abstain_correctness"]
-            >= thresholds["phase"]["abstain_correctness_min"]
-            and metrics["conflict_correctness"]
-            >= thresholds["phase"]["conflict_correctness_min"]
-            and metrics["false_repair_rate"]
-            <= thresholds["phase"]["false_repair_rate_max"]
-        ),
     }
+    hard_pass = all(hard_gates.values())
+    soft_pass = all(soft_gates.values())
+    report["gates"] = {
+        "hard": hard_gates,
+        "soft": soft_gates,
+        "hard_pass": hard_pass,
+        "soft_pass": soft_pass,
+        "overall_pass": hard_pass and soft_pass,
+    }
+    if hybrid_delta is not None:
+        report["hybrid_recall_delta"] = hybrid_delta
 
     baseline_path = args.baseline_path or args.report_path
     previous = _load_previous(baseline_path)
@@ -340,6 +433,8 @@ def main() -> None:
     )
 
     print(json.dumps(report, indent=2))
+    if args.fail_on_hard_gates and not hard_pass:
+        sys.exit(2)
 
 
 if __name__ == "__main__":

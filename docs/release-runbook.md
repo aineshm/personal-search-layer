@@ -52,10 +52,10 @@ Interpretation:
 
 ## 7. Run answer eval gate
 ```bash
-uv run python eval/run_answer_eval.py --report-path eval/reports/answer_latest.json
+uv run python eval/run_answer_eval.py --report-path eval/reports/answer_latest.json --fail-on-hard-gates
 ```
 
-Interpretation:
+Interpretation (schema v3):
 - Review `metrics` and `gates` fields.
 - Key tracked metrics:
   - `citation_coverage`
@@ -68,13 +68,18 @@ Interpretation:
 - `over_abstain_rate`
 - `under_abstain_rate`
 - `unsupported_claim_rate`
+- `verdict_correctness`
 
 Pass/fail matrix (phase gates):
-- `abstain_correctness >= 0.95` must pass.
-- `citation_coverage >= 0.90` must pass.
-- `conflict_correctness >= 0.85` must pass.
-- `false_repair_rate <= 0.20` must pass.
-- `gates.overall_pass` is true only when all four conditions pass.
+- Hard gates:
+  - `abstain_correctness >= 0.95` must pass.
+  - `conflict_correctness >= 0.85` must pass.
+  - `hybrid_recall_delta >= -0.05` when provided.
+- Soft gates:
+  - `citation_coverage >= 0.90`
+  - `false_repair_rate <= 0.20`
+- `gates.overall_pass` is true only when all hard + soft gates pass.
+- CI should fail on hard gate failures using `--fail-on-hard-gates`.
 
 ## 8. Validate query UX paths
 ```bash

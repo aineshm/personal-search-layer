@@ -27,7 +27,7 @@ def test_run_answer_eval_outputs_expected_schema(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
     report = json.loads(report_path.read_text())
-    assert report["schema_version"] == "2.0"
+    assert report["schema_version"] == "3.0"
     assert "metrics" in report
     assert "citation_coverage" in report["metrics"]
     assert "abstain_correctness" in report["metrics"]
@@ -35,6 +35,11 @@ def test_run_answer_eval_outputs_expected_schema(tmp_path: Path) -> None:
     assert "false_answer_rate" in report["metrics"]
     assert "metrics_by_intent" in report
     assert "metrics_by_case_family" in report
+    assert "gates" in report
+    assert "hard" in report["gates"]
+    assert "soft" in report["gates"]
+    assert "hard_pass" in report["gates"]
+    assert "overall_pass" in report["gates"]
     assert isinstance(report.get("cases_detail"), list)
 
 
