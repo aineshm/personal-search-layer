@@ -18,7 +18,7 @@ Deliver a privacy-preserving, laptop-first search and answer system with traceab
 - **Vector index**: FAISS for embeddings; metadata in SQLite.
 - **Retriever**: hybrid fusion (RRF), intent-aware reranker, filters, caching.
 - **Agent engine**: router → retrieve → (optional multi-hop) → synthesize → verify/repair.
-- **UI**: Streamlit MVP (search-only + answer mode).
+- **UI**: Streamlit UI (search + verified answer mode with citations/conflicts/trace panels).
 - **Eval/CI**: golden eval sets + adversarial tests + performance profiling.
 
 ## Minimal data model
@@ -77,6 +77,9 @@ uv run python scripts/query.py "smoke corpus keyword" --top-k 8 --rebuild-index
 
 # Run the UI (search + answer modes)
 uv run streamlit run src/personal_search_layer/ui.py
+
+# Run answer eval with hard-gate failure behavior (CI-friendly)
+uv run python eval/run_answer_eval.py --report-path eval/reports/answer_latest.json --fail-on-hard-gates
 
 # Database maintenance
 uv run python scripts/maintenance.py --integrity-check

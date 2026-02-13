@@ -91,6 +91,7 @@ def _prepare_eval_data(data_dir: Path, ingest_path: Path) -> None:
     env = os.environ.copy()
     env["PSL_DATA_DIR"] = str(data_dir)
     env["PYTHONPATH"] = str(Path("src").resolve())
+    # Keep answer eval deterministic and isolated from developer-local corpora.
     commands = [
         [sys.executable, "scripts/maintenance.py", "--migrate"],
         [sys.executable, "scripts/ingest.py", "--path", str(ingest_path)],
@@ -111,6 +112,7 @@ def _prepare_eval_data(data_dir: Path, ingest_path: Path) -> None:
 
 def _citation_coverage(draft: object | None, *, abstained: bool) -> float:
     if abstained:
+        # Correct abstentions should not count against citation quality metrics.
         return 1.0
     if not draft or not draft.claims:
         return 0.0
@@ -125,6 +127,7 @@ def _citation_precision_proxy(
     abstained: bool,
 ) -> float:
     if abstained:
+        # Precision proxy is only meaningful for emitted answers.
         return 1.0
     if not draft or not draft.claims or not verification:
         return 0.0
@@ -406,6 +409,7 @@ def main() -> None:
         >= thresholds["phase"]["conflict_correctness_min"],
         "hybrid_recall_regression_pass": hybrid_recall_pass,
     }
+    # Hard gates are release blockers; soft gates are trend/watch signals.
     soft_gates = {
         "citation_coverage_pass": metrics["citation_coverage"]
         >= thresholds["phase"]["citation_coverage_min"],

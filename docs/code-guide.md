@@ -57,6 +57,7 @@ This is a map of the current codebase and how pieces connect.
 ## Eval workflow
 - Retrieval eval: `eval/run_golden_eval.py` -> `eval/reports/latest.json`.
 - Answer eval: `eval/run_answer_eval.py` -> `eval/reports/answer_latest.json`.
+  - Supports isolated eval data prep (`--data-dir`, `--ingest-path`) and hard-gate exits (`--fail-on-hard-gates`).
 - Readable retrieval summary: `eval/summarize_eval.py`.
 
 ## Commenting guidelines

@@ -142,6 +142,7 @@ def _contains_prompt_injection_signal(query_tokens: set[str]) -> bool:
 
 
 def _critical_coverage_min(intent: PrimaryIntent | None) -> float:
+    # Facts need stricter entity/term coverage than synthesis-style intents.
     if intent == PrimaryIntent.FACT:
         return max(VERIFIER_CRITICAL_COVERAGE_MIN, 0.5)
     if intent in {
@@ -158,6 +159,7 @@ def _critical_coverage_min(intent: PrimaryIntent | None) -> float:
 def _required_alignment_overlap(
     intent: PrimaryIntent | None, query_token_count: int
 ) -> int:
+    # Synthesis/compare prompts often map to broader language than fact lookups.
     if query_token_count <= 1:
         return 1
     if intent in {
@@ -183,6 +185,7 @@ def verify_answer(
     decision_path: list[str] = []
     query_tokens = _query_tokens(query)
 
+    # Treat jailbreak-like requests as mismatches even when no claims are extracted.
     if _contains_prompt_injection_signal(query_tokens):
         return VerificationResult(
             passed=False,
@@ -368,6 +371,7 @@ def verify_answer(
         )
 
     if missing_critical_tokens & _HARD_REQUIRED_QUERY_TOKENS:
+        # Hard-required tokens guard against near-miss false answers (e.g., "api endpoint").
         decision_path.append("hard_required_token_missing")
         issues.append(
             VerificationIssue(
