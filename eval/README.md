@@ -35,7 +35,9 @@ uv run python eval/summarize_eval.py --report-path eval/reports/latest.json
 ## Answer-mode verifier eval
 - `verifier_cases.jsonl` covers supported, out-of-corpus, conflict, and prompt-injection-style cases.
 - `run_answer_eval.py` computes citation coverage, citation precision proxy, abstain correctness,
-  conflict correctness, repair rate, and false-repair rate.
+  conflict correctness, repair rate, false-repair rate, and error buckets.
+- Reports include per-intent and per-case-family rollups.
+- Use `--baseline-path` to compare against an explicit locked baseline report.
 
 ```bash
 uv run python eval/run_answer_eval.py --report-path eval/reports/answer_latest.json

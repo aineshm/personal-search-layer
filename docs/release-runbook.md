@@ -64,7 +64,17 @@ Interpretation:
   - `conflict_correctness`
   - `repair_rate`
   - `false_repair_rate`
-- `gates.overall_pass` indicates whether configured thresholds passed.
+- `false_answer_rate`
+- `over_abstain_rate`
+- `under_abstain_rate`
+- `unsupported_claim_rate`
+
+Pass/fail matrix (phase gates):
+- `abstain_correctness >= 0.95` must pass.
+- `citation_coverage >= 0.90` must pass.
+- `conflict_correctness >= 0.85` must pass.
+- `false_repair_rate <= 0.20` must pass.
+- `gates.overall_pass` is true only when all four conditions pass.
 
 ## 8. Validate query UX paths
 ```bash
@@ -83,6 +93,15 @@ For a release candidate:
 1. Keep generated reports under `eval/reports/history/`.
 2. Record commit hash + retrieval summary + answer summary in release notes.
 3. Treat that snapshot as the comparison baseline for the next cycle.
+4. To run against an explicit locked baseline: `--baseline-path <path/to/report.json>`.
+5. Baseline updates require a PR note that explains metric deltas and why the new baseline is accepted.
+
+Exception process:
+- If a release must proceed with a failed non-primary gate, document:
+  - failed gate(s),
+  - risk assessment,
+  - mitigation plan and due date.
+- Primary trust gate (`abstain_correctness`) has no exception by default.
 
 ## 10. Failure handling
 - Schema errors: rerun `scripts/maintenance.py --migrate`.

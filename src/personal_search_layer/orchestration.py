@@ -95,6 +95,8 @@ def run_query(
     searched_queries = [query]
     hop_count = 0
     repair_count = 0
+    repair_outcome = "none"
+    verifier_timing_ms: dict[str, float] = {}
 
     lexical, vector, hybrid = _run_retrieval(
         query,
@@ -112,9 +114,13 @@ def run_query(
     if mode == "answer":
         draft_answer = synthesize_extractive(query, chunks, intent)
         draft_answer.searched_queries = list(searched_queries)
+        verify_start = time.perf_counter()
         verification = verify_answer(
-            query, draft_answer, chunks, settings.verifier_mode
+            query, draft_answer, chunks, settings.verifier_mode, intent=intent
         )
+        verifier_timing_ms["initial_verify"] = (
+            time.perf_counter() - verify_start
+        ) * 1000
         verification.searched_queries = list(searched_queries)
 
         if (
@@ -141,9 +147,13 @@ def run_query(
                     chunks = rerank_chunks(query, chunks)
                 draft_answer = synthesize_extractive(query, chunks, intent)
                 draft_answer.searched_queries = list(searched_queries)
+                verify_start = time.perf_counter()
                 verification = verify_answer(
-                    query, draft_answer, chunks, settings.verifier_mode
+                    query, draft_answer, chunks, settings.verifier_mode, intent=intent
                 )
+                verifier_timing_ms["post_hop_verify"] = (
+                    time.perf_counter() - verify_start
+                ) * 1000
                 verification.searched_queries = list(searched_queries)
 
         if (
@@ -152,24 +162,44 @@ def run_query(
             and settings.max_repair_passes > 0
             and repair_count < MAX_REPAIRS
         ):
-            repaired = repair_answer(
-                query,
-                draft_answer,
-                chunks,
-                settings.verifier_mode,
-                intent=intent,
-            )
-            repair_count += 1
-            if repaired is not None:
-                repaired.searched_queries = list(searched_queries)
-                draft_answer = repaired
-                verification = verify_answer(
+            if verification.verdict_code in {
+                "query_mismatch",
+                "conflict_detected",
+                "insufficient_evidence",
+            }:
+                repair_outcome = "skipped_ineligible"
+            else:
+                repair_outcome = "noop"
+            repaired = None
+            if repair_outcome == "noop":
+                repaired = repair_answer(
                     query,
                     draft_answer,
                     chunks,
                     settings.verifier_mode,
+                    intent=intent,
                 )
-                verification.searched_queries = list(searched_queries)
+                repair_count += 1
+                if repaired is not None:
+                    repaired.searched_queries = list(searched_queries)
+                    draft_answer = repaired
+                    verify_start = time.perf_counter()
+                    verification = verify_answer(
+                        query,
+                        draft_answer,
+                        chunks,
+                        settings.verifier_mode,
+                        intent=intent,
+                    )
+                    verifier_timing_ms["post_repair_verify"] = (
+                        time.perf_counter() - verify_start
+                    ) * 1000
+                    verification.searched_queries = list(searched_queries)
+                    repair_outcome = (
+                        "successful" if not verification.abstain else "harmful"
+                    )
+                else:
+                    repair_outcome = "unsuccessful"
 
             if verification and verification.abstain:
                 verification.searched_queries = list(searched_queries)
@@ -201,14 +231,19 @@ def run_query(
             "mode": mode,
             "hop_count": hop_count,
             "repair_count": repair_count,
+            "repair_outcome": repair_outcome,
             "searched_queries": searched_queries,
         },
         "verification": {
             "abstain": verification.abstain if verification else None,
+            "verdict_code": verification.verdict_code if verification else None,
+            "confidence": verification.confidence if verification else None,
+            "decision_path": verification.decision_path if verification else [],
             "issues": [issue.type for issue in verification.issues]
             if verification
             else [],
             "conflicts": verification.conflicts if verification else [],
+            "stage_timing_ms": verifier_timing_ms,
         },
     }
 

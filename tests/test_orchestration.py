@@ -38,6 +38,15 @@ def test_run_query_bounds_with_answer_mode(monkeypatch) -> None:
     orch = result.tool_trace["orchestration"]
     assert orch["hop_count"] <= 1
     assert orch["repair_count"] <= 1
+    assert orch["repair_outcome"] in {
+        "none",
+        "skipped_ineligible",
+        "successful",
+        "harmful",
+        "unsuccessful",
+    }
     assert orch["searched_queries"]
     assert result.draft_answer is not None
     assert result.verification is not None
+    assert result.verification.verdict_code
+    assert isinstance(result.verification.decision_path, list)

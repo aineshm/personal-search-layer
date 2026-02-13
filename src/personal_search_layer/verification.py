@@ -5,6 +5,13 @@ from __future__ import annotations
 import re
 
 from personal_search_layer.answering import synthesize_extractive
+from personal_search_layer.config import (
+    VERIFIER_AGGREGATE_MIN,
+    VERIFIER_CITATION_SPAN_QUALITY_MIN,
+    VERIFIER_CLAIM_SUPPORT_MIN,
+    VERIFIER_CRITICAL_COVERAGE_MIN,
+    VERIFIER_QUERY_ALIGNMENT_MIN,
+)
 from personal_search_layer.models import (
     DraftAnswer,
     ScoredChunk,
@@ -14,28 +21,62 @@ from personal_search_layer.models import (
 from personal_search_layer.router import PrimaryIntent, VerifierMode
 
 _NUMBER_FACT_RE = re.compile(
-    r"\b([a-z][a-z0-9\s_-]{2,40})\s+(?:is|are|was|were)\s+([0-9]{1,4})\b",
+    r"\b([a-z][a-z0-9\s_-]{2,40})\s+(?:is|are|was|were|has|have)\s+([0-9]{1,4})\b",
     re.IGNORECASE,
 )
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
+_STOPWORDS = {
+    "what",
+    "when",
+    "where",
+    "which",
+    "with",
+    "that",
+    "this",
+    "from",
+    "into",
+    "your",
+}
+_PROMPT_INJECTION_TOKENS = {
+    "ignore",
+    "reveal",
+    "password",
+    "secret",
+    "secrets",
+    "exfil",
+    "exfiltrate",
+    "instructions",
+}
 
 
-def _claim_supported(claim_text: str, chunk_text: str) -> bool:
+def _token_match(token: str, text_tokens: set[str]) -> bool:
+    if token in text_tokens:
+        return True
+    if len(token) < 5:
+        return False
+    return any(
+        candidate.startswith(token) or token.startswith(candidate)
+        for candidate in text_tokens
+        if len(candidate) >= 5
+    )
+
+
+def _claim_supported(claim_text: str, chunk_text: str) -> float:
     claim_tokens = [
         token
-        for token in re.findall(r"[a-z0-9]+", claim_text.lower())
-        if len(token) > 2
+        for token in _TOKEN_RE.findall(claim_text.lower())
+        if len(token) > 2 and token not in _STOPWORDS
     ]
     if not claim_tokens:
-        return False
+        return 0.0
     chunk_lower = chunk_text.lower()
     overlap = sum(1 for token in claim_tokens if token in chunk_lower)
     critical_tokens = [
         token for token in claim_tokens if len(token) >= 6 or token.isdigit()
     ]
     if critical_tokens and any(token not in chunk_lower for token in critical_tokens):
-        return False
-    return overlap >= max(2, int(len(claim_tokens) * 0.6))
+        return 0.0
+    return overlap / len(claim_tokens)
 
 
 def _detect_conflicts(chunks: list[ScoredChunk]) -> list[str]:
@@ -59,13 +100,39 @@ def _detect_conflicts(chunks: list[ScoredChunk]) -> list[str]:
     return conflicts
 
 
+def _query_tokens(query: str) -> set[str]:
+    return {
+        token
+        for token in _TOKEN_RE.findall(query.lower())
+        if len(token) >= 4 and token not in _STOPWORDS
+    }
+
+
+def _contains_prompt_injection_signal(query_tokens: set[str]) -> bool:
+    return any(token in _PROMPT_INJECTION_TOKENS for token in query_tokens)
+
+
+def _critical_coverage_min(intent: PrimaryIntent | None) -> float:
+    if intent in {
+        PrimaryIntent.SYNTHESIS,
+        PrimaryIntent.COMPARE,
+        PrimaryIntent.TIMELINE,
+    }:
+        return min(VERIFIER_CRITICAL_COVERAGE_MIN, VERIFIER_QUERY_ALIGNMENT_MIN)
+    return VERIFIER_CRITICAL_COVERAGE_MIN
+
+
 def verify_answer(
     query: str,
     draft: DraftAnswer,
     chunks: list[ScoredChunk],
     mode: VerifierMode,
+    *,
+    intent: PrimaryIntent | None = None,
 ) -> VerificationResult:
     issues: list[VerificationIssue] = []
+    decision_path: list[str] = []
+
     if mode == VerifierMode.OFF:
         return VerificationResult(
             passed=True,
@@ -73,60 +140,145 @@ def verify_answer(
             conflicts=[],
             abstain=False,
             abstain_reason=None,
+            verdict_code="supported",
+            confidence=1.0,
+            decision_path=["mode_off"],
             searched_queries=list(draft.searched_queries),
         )
 
-    query_tokens = {
-        token
-        for token in _TOKEN_RE.findall(query.lower())
-        if len(token) >= 4 and token not in {"what", "when", "where", "which", "with", "that"}
-    }
-    claim_alignment = 0
+    if not draft.claims:
+        return VerificationResult(
+            passed=False,
+            issues=[
+                VerificationIssue(
+                    type="insufficient_evidence",
+                    claim_id=None,
+                    detail="No claims were available for verification.",
+                )
+            ],
+            conflicts=[],
+            abstain=True,
+            abstain_reason="No grounded claims could be extracted from retrieved evidence.",
+            verdict_code="insufficient_evidence",
+            confidence=0.0,
+            decision_path=["no_claims"],
+            searched_queries=list(draft.searched_queries),
+        )
+
+    query_tokens = _query_tokens(query)
+    if _contains_prompt_injection_signal(query_tokens):
+        return VerificationResult(
+            passed=False,
+            issues=[
+                VerificationIssue(
+                    type="query_mismatch",
+                    claim_id=None,
+                    detail="Prompt-injection-like request is unsupported in evidence-only mode.",
+                )
+            ],
+            conflicts=[],
+            abstain=True,
+            abstain_reason="Request is not answerable from trusted corpus evidence.",
+            verdict_code="query_mismatch",
+            confidence=0.0,
+            decision_path=["prompt_injection_signal"],
+            searched_queries=list(draft.searched_queries),
+        )
+
     chunk_by_id = {chunk.chunk_id: chunk for chunk in chunks}
+    all_claim_tokens: set[str] = set()
+
+    aligned_claims = 0
+    supported_claims = 0
+    citation_ok_claims = 0
+
     for claim in draft.claims:
         claim_tokens = set(_TOKEN_RE.findall(claim.text.lower()))
-        if len(claim_tokens & query_tokens) >= 2:
-            claim_alignment += 1
+        all_claim_tokens |= claim_tokens
+        required_overlap = 1 if len(query_tokens) <= 1 else 2
+        overlap_count = sum(
+            1 for token in query_tokens if _token_match(token, claim_tokens)
+        )
+        if query_tokens and overlap_count >= required_overlap:
+            aligned_claims += 1
+
         if not claim.citations:
             issues.append(
                 VerificationIssue(
-                    type="missing_citation",
+                    type="citation_gap",
                     claim_id=claim.claim_id,
                     detail="Claim has no citations.",
                 )
             )
             continue
-        supported = False
+
+        span_quality = max(
+            citation.quote_span_end - citation.quote_span_start
+            for citation in claim.citations
+        ) / max(1, len(claim.text))
+        if (
+            max(claim.citation_span_quality, span_quality)
+            >= VERIFIER_CITATION_SPAN_QUALITY_MIN
+        ):
+            citation_ok_claims += 1
+        else:
+            issues.append(
+                VerificationIssue(
+                    type="citation_gap",
+                    claim_id=claim.claim_id,
+                    detail="Citation spans were too weak for this claim.",
+                )
+            )
+
+        claim_supported = False
+        claim_best_support = 0.0
         for citation in claim.citations:
             chunk = chunk_by_id.get(citation.chunk_id)
             if not chunk:
                 continue
-            if _claim_supported(claim.text, chunk.chunk_text):
-                supported = True
+            support_score = _claim_supported(claim.text, chunk.chunk_text)
+            claim_best_support = max(claim_best_support, support_score)
+            if support_score >= VERIFIER_CLAIM_SUPPORT_MIN:
+                claim_supported = True
                 break
-        if not supported:
+        if claim_supported:
+            supported_claims += 1
+        else:
             issues.append(
                 VerificationIssue(
                     type="unsupported_claim",
                     claim_id=claim.claim_id,
-                    detail=claim.text,
+                    detail=f"{claim.text} (support={claim_best_support:.2f})",
                 )
             )
+
+    claim_total = max(1, len(draft.claims))
+    query_alignment_score = aligned_claims / claim_total
+    claim_support_score = supported_claims / claim_total
+    citation_span_quality_score = citation_ok_claims / claim_total
+    critical_query_tokens = {
+        token for token in query_tokens if len(token) >= 6 or token.isdigit()
+    }
+    critical_coverage_score = (
+        sum(
+            1
+            for token in critical_query_tokens
+            if _token_match(token, all_claim_tokens)
+        )
+        / max(1, len(critical_query_tokens))
+        if critical_query_tokens
+        else 1.0
+    )
 
     conflicts = (
         _detect_conflicts(chunks)
         if mode in {VerifierMode.STRICT, VerifierMode.STRICT_CONFLICT}
         else []
     )
-    abstain = False
-    abstain_reason: str | None = None
+    agreement_score = 0.0 if conflicts else 1.0
 
-    if not draft.claims:
-        abstain = True
-        abstain_reason = (
-            "No grounded claims could be extracted from retrieved evidence."
-        )
-    elif query_tokens and claim_alignment == 0:
+    if query_tokens and query_alignment_score < VERIFIER_QUERY_ALIGNMENT_MIN:
+        decision_path.append("query_alignment_failed")
         issues.append(
             VerificationIssue(
                 type="query_mismatch",
@@ -134,24 +286,111 @@ def verify_answer(
                 detail="Retrieved claims are not aligned with the query topic.",
             )
         )
-        abstain = True
-        abstain_reason = "Retrieved evidence did not match the query topic."
-    elif any(
-        issue.type in {"missing_citation", "unsupported_claim"} for issue in issues
-    ):
-        abstain = True
-        abstain_reason = "Retrieved evidence did not fully support all claims."
-    elif mode == VerifierMode.STRICT_CONFLICT and conflicts:
-        abstain = True
-        abstain_reason = "Conflicting evidence detected in retrieved sources."
+        return VerificationResult(
+            passed=False,
+            issues=issues,
+            conflicts=conflicts,
+            abstain=True,
+            abstain_reason="Retrieved evidence did not match the query topic.",
+            verdict_code="query_mismatch",
+            confidence=query_alignment_score,
+            decision_path=decision_path,
+            searched_queries=list(draft.searched_queries),
+        )
 
-    passed = not abstain
+    if conflicts and mode in {VerifierMode.STRICT, VerifierMode.STRICT_CONFLICT}:
+        decision_path.append("conflict_detected")
+        return VerificationResult(
+            passed=False,
+            issues=issues,
+            conflicts=conflicts,
+            abstain=True,
+            abstain_reason="Conflicting evidence detected in retrieved sources.",
+            verdict_code="conflict_detected",
+            confidence=min(query_alignment_score, claim_support_score),
+            decision_path=decision_path,
+            searched_queries=list(draft.searched_queries),
+        )
+
+    if critical_coverage_score < _critical_coverage_min(intent):
+        decision_path.append("critical_token_coverage_failed")
+        issues.append(
+            VerificationIssue(
+                type="insufficient_evidence",
+                claim_id=None,
+                detail="Critical query terms were not supported by retrieved claims.",
+            )
+        )
+        return VerificationResult(
+            passed=False,
+            issues=issues,
+            conflicts=conflicts,
+            abstain=True,
+            abstain_reason="Evidence does not cover the core entities/terms in the query.",
+            verdict_code="insufficient_evidence",
+            confidence=critical_coverage_score,
+            decision_path=decision_path,
+            searched_queries=list(draft.searched_queries),
+        )
+
+    if any(issue.type == "citation_gap" for issue in issues):
+        decision_path.append("citation_gap")
+        return VerificationResult(
+            passed=False,
+            issues=issues,
+            conflicts=conflicts,
+            abstain=True,
+            abstain_reason="Citation coverage/quality was insufficient for one or more claims.",
+            verdict_code="citation_gap",
+            confidence=(query_alignment_score + citation_span_quality_score) / 2.0,
+            decision_path=decision_path,
+            searched_queries=list(draft.searched_queries),
+        )
+
+    if claim_support_score < VERIFIER_CLAIM_SUPPORT_MIN:
+        decision_path.append("unsupported_claim")
+        return VerificationResult(
+            passed=False,
+            issues=issues,
+            conflicts=conflicts,
+            abstain=True,
+            abstain_reason="Retrieved evidence did not fully support all claims.",
+            verdict_code="unsupported_claim",
+            confidence=claim_support_score,
+            decision_path=decision_path,
+            searched_queries=list(draft.searched_queries),
+        )
+
+    aggregate_score = (
+        query_alignment_score * 0.35
+        + claim_support_score * 0.35
+        + citation_span_quality_score * 0.20
+        + agreement_score * 0.10
+    )
+    if aggregate_score < VERIFIER_AGGREGATE_MIN:
+        decision_path.append("aggregate_below_threshold")
+        return VerificationResult(
+            passed=False,
+            issues=issues,
+            conflicts=conflicts,
+            abstain=True,
+            abstain_reason="Combined evidence confidence is below threshold.",
+            verdict_code="insufficient_evidence",
+            confidence=aggregate_score,
+            decision_path=decision_path,
+            searched_queries=list(draft.searched_queries),
+        )
+
+    decision_path.append("supported")
     return VerificationResult(
-        passed=passed,
+        passed=True,
         issues=issues,
         conflicts=conflicts,
-        abstain=abstain,
-        abstain_reason=abstain_reason,
+        abstain=False,
+        abstain_reason=None,
+        verdict_code="supported",
+        confidence=aggregate_score,
+        decision_path=decision_path,
         searched_queries=list(draft.searched_queries),
     )
 
@@ -165,16 +404,19 @@ def repair_answer(
     intent: PrimaryIntent,
 ) -> DraftAnswer | None:
     """Attempt a single deterministic repair by re-synthesizing from available chunks."""
-    verification = verify_answer(query, draft, chunks, mode)
-    has_unsupported = any(
-        issue.type in {"missing_citation", "unsupported_claim"}
-        for issue in verification.issues
-    )
-    if not has_unsupported:
+    verification = verify_answer(query, draft, chunks, mode, intent=intent)
+    if verification.verdict_code in {
+        "query_mismatch",
+        "conflict_detected",
+        "insufficient_evidence",
+    }:
+        return None
+    if verification.passed:
         return draft
+
     repaired = synthesize_extractive(query, chunks, intent)
     repaired.searched_queries = list(draft.searched_queries)
-    repaired_verification = verify_answer(query, repaired, chunks, mode)
+    repaired_verification = verify_answer(query, repaired, chunks, mode, intent=intent)
     if repaired_verification.passed:
         return repaired
     return None

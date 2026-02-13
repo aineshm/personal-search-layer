@@ -120,6 +120,10 @@ class Claim:
     claim_id: str
     text: str
     citations: list[Citation]
+    overlap_score: float = 0.0
+    citation_span_quality: float = 0.0
+    source_count: int = 1
+    supportability_score: float = 0.0
 
 
 @dataclass
@@ -143,6 +147,9 @@ class VerificationResult:
     conflicts: list[str]
     abstain: bool
     abstain_reason: str | None
+    verdict_code: str = "insufficient_evidence"
+    confidence: float = 0.0
+    decision_path: list[str] = field(default_factory=list)
     searched_queries: list[str] = field(default_factory=list)
 
 
