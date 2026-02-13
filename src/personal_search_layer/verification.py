@@ -39,6 +39,12 @@ _STOPWORDS = {
 }
 _PROMPT_INJECTION_TOKENS = {
     "ignore",
+    "bypass",
+    "safeguard",
+    "safeguards",
+    "environment",
+    "variables",
+    "unrestricted",
     "reveal",
     "password",
     "secret",
@@ -46,6 +52,29 @@ _PROMPT_INJECTION_TOKENS = {
     "exfil",
     "exfiltrate",
     "instructions",
+}
+_NON_CRITICAL_QUERY_TOKENS = {
+    "mentioned",
+    "mention",
+    "says",
+    "say",
+    "describe",
+    "explain",
+    "summarize",
+    "summary",
+    "compare",
+    "overview",
+}
+_HARD_REQUIRED_QUERY_TOKENS = {
+    "retention",
+    "policy",
+    "encryption",
+    "algorithm",
+    "backup",
+    "cadence",
+    "database",
+    "endpoint",
+    "api",
 }
 
 
@@ -113,13 +142,33 @@ def _contains_prompt_injection_signal(query_tokens: set[str]) -> bool:
 
 
 def _critical_coverage_min(intent: PrimaryIntent | None) -> float:
+    if intent == PrimaryIntent.FACT:
+        return max(VERIFIER_CRITICAL_COVERAGE_MIN, 0.5)
     if intent in {
         PrimaryIntent.SYNTHESIS,
         PrimaryIntent.COMPARE,
         PrimaryIntent.TIMELINE,
+        PrimaryIntent.TASK,
+        PrimaryIntent.OTHER,
     }:
-        return min(VERIFIER_CRITICAL_COVERAGE_MIN, VERIFIER_QUERY_ALIGNMENT_MIN)
+        return min(VERIFIER_CRITICAL_COVERAGE_MIN, 0.2)
     return VERIFIER_CRITICAL_COVERAGE_MIN
+
+
+def _required_alignment_overlap(
+    intent: PrimaryIntent | None, query_token_count: int
+) -> int:
+    if query_token_count <= 1:
+        return 1
+    if intent in {
+        PrimaryIntent.SYNTHESIS,
+        PrimaryIntent.COMPARE,
+        PrimaryIntent.TIMELINE,
+        PrimaryIntent.TASK,
+        PrimaryIntent.OTHER,
+    }:
+        return 1
+    return 2
 
 
 def verify_answer(
@@ -132,6 +181,26 @@ def verify_answer(
 ) -> VerificationResult:
     issues: list[VerificationIssue] = []
     decision_path: list[str] = []
+    query_tokens = _query_tokens(query)
+
+    if _contains_prompt_injection_signal(query_tokens):
+        return VerificationResult(
+            passed=False,
+            issues=[
+                VerificationIssue(
+                    type="query_mismatch",
+                    claim_id=None,
+                    detail="Prompt-injection-like request is unsupported in evidence-only mode.",
+                )
+            ],
+            conflicts=[],
+            abstain=True,
+            abstain_reason="Request is not answerable from trusted corpus evidence.",
+            verdict_code="query_mismatch",
+            confidence=0.0,
+            decision_path=["prompt_injection_signal"],
+            searched_queries=list(draft.searched_queries),
+        )
 
     if mode == VerifierMode.OFF:
         return VerificationResult(
@@ -165,26 +234,6 @@ def verify_answer(
             searched_queries=list(draft.searched_queries),
         )
 
-    query_tokens = _query_tokens(query)
-    if _contains_prompt_injection_signal(query_tokens):
-        return VerificationResult(
-            passed=False,
-            issues=[
-                VerificationIssue(
-                    type="query_mismatch",
-                    claim_id=None,
-                    detail="Prompt-injection-like request is unsupported in evidence-only mode.",
-                )
-            ],
-            conflicts=[],
-            abstain=True,
-            abstain_reason="Request is not answerable from trusted corpus evidence.",
-            verdict_code="query_mismatch",
-            confidence=0.0,
-            decision_path=["prompt_injection_signal"],
-            searched_queries=list(draft.searched_queries),
-        )
-
     chunk_by_id = {chunk.chunk_id: chunk for chunk in chunks}
     all_claim_tokens: set[str] = set()
 
@@ -195,7 +244,7 @@ def verify_answer(
     for claim in draft.claims:
         claim_tokens = set(_TOKEN_RE.findall(claim.text.lower()))
         all_claim_tokens |= claim_tokens
-        required_overlap = 1 if len(query_tokens) <= 1 else 2
+        required_overlap = _required_alignment_overlap(intent, len(query_tokens))
         overlap_count = sum(
             1 for token in query_tokens if _token_match(token, claim_tokens)
         )
@@ -257,7 +306,13 @@ def verify_answer(
     claim_support_score = supported_claims / claim_total
     citation_span_quality_score = citation_ok_claims / claim_total
     critical_query_tokens = {
-        token for token in query_tokens if len(token) >= 6 or token.isdigit()
+        token
+        for token in query_tokens
+        if (len(token) >= 6 or token.isdigit())
+        and token not in _NON_CRITICAL_QUERY_TOKENS
+    }
+    missing_critical_tokens = {
+        token for token in critical_query_tokens if not _token_match(token, all_claim_tokens)
     }
     critical_coverage_score = (
         sum(
@@ -308,6 +363,28 @@ def verify_answer(
             abstain_reason="Conflicting evidence detected in retrieved sources.",
             verdict_code="conflict_detected",
             confidence=min(query_alignment_score, claim_support_score),
+            decision_path=decision_path,
+            searched_queries=list(draft.searched_queries),
+        )
+
+    if missing_critical_tokens & _HARD_REQUIRED_QUERY_TOKENS:
+        decision_path.append("hard_required_token_missing")
+        issues.append(
+            VerificationIssue(
+                type="insufficient_evidence",
+                claim_id=None,
+                detail="Required query term(s) were not supported by retrieved claims: "
+                + ", ".join(sorted(missing_critical_tokens & _HARD_REQUIRED_QUERY_TOKENS)),
+            )
+        )
+        return VerificationResult(
+            passed=False,
+            issues=issues,
+            conflicts=conflicts,
+            abstain=True,
+            abstain_reason="Evidence does not cover required query terms.",
+            verdict_code="insufficient_evidence",
+            confidence=critical_coverage_score,
             decision_path=decision_path,
             searched_queries=list(draft.searched_queries),
         )

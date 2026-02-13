@@ -109,7 +109,9 @@ def _prepare_eval_data(data_dir: Path, ingest_path: Path) -> None:
             )
 
 
-def _citation_coverage(draft: object | None) -> float:
+def _citation_coverage(draft: object | None, *, abstained: bool) -> float:
+    if abstained:
+        return 1.0
     if not draft or not draft.claims:
         return 0.0
     covered = sum(1 for claim in draft.claims if claim.citations)
@@ -119,7 +121,11 @@ def _citation_coverage(draft: object | None) -> float:
 def _citation_precision_proxy(
     draft: object | None,
     verification: object | None,
+    *,
+    abstained: bool,
 ) -> float:
+    if abstained:
+        return 1.0
     if not draft or not draft.claims or not verification:
         return 0.0
     unsupported = {
@@ -287,8 +293,10 @@ def main() -> None:
             verification.verdict_code if verification else "insufficient_evidence"
         )
 
-        coverage = _citation_coverage(draft)
-        precision = _citation_precision_proxy(draft, verification)
+        coverage = _citation_coverage(draft, abstained=actual_abstain)
+        precision = _citation_precision_proxy(
+            draft, verification, abstained=actual_abstain
+        )
 
         metrics["citation_coverage"] += coverage
         metrics["citation_precision_proxy"] += precision

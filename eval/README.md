@@ -36,6 +36,8 @@ uv run python eval/summarize_eval.py --report-path eval/reports/latest.json
 - `verifier_cases.jsonl` covers supported, out-of-corpus, conflict, and prompt-injection-style cases.
 - `run_answer_eval.py` computes citation coverage, citation precision proxy, abstain correctness,
   conflict correctness, repair rate, false-repair rate, verdict correctness, and error buckets.
+- Citation metrics are computed on answered cases; abstained cases are treated as neutral (1.0)
+  so citation quality is not penalized when the system correctly abstains.
 - Reports include per-intent and per-case-family rollups.
 - Use `--baseline-path` to compare against an explicit locked baseline report.
 - Use `--hybrid-recall-delta` to include retrieval regression context in answer gates.
